@@ -76,7 +76,7 @@ BUDGET_TECH_THRESHOLD = 75.0             # technical-only ENTER bar when budget 
 # --- Scanner tuning -------------------------------------------------------
 KRAKEN_OHLC_INTERVAL = 5      # minutes per candle
 KRAKEN_MAX_PAIRS = 25         # cap pairs scanned per cycle
-OHLCV_CANDLES = 100           # candles requested per pair
+OHLCV_CANDLES = 300           # candles per pair (must exceed EMA_SLOW so EMA200 computes)
 KRAKEN_QUOTES = ("ZUSD", "USD")
 KALSHI_CLOSE_WITHIN_HOURS = 24
 NEWS_LOOKBACK_HOURS = 2
@@ -102,10 +102,10 @@ MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 VOLUME_CONFIRM_MULT = 1.5
-TS_RSI_WEIGHT = 20.0
-TS_MACD_WEIGHT = 20.0
-TS_EMA_STRONG = 30.0
-TS_EMA_MIXED = 10.0
+TS_RSI_WEIGHT = 25.0
+TS_MACD_WEIGHT = 25.0
+TS_EMA_STRONG = 50.0
+TS_EMA_MIXED = 15.0
 TS_VOLUME_WEIGHT = 10.0
 
 # --- Kalshi scoring (signals) ---------------------------------------------

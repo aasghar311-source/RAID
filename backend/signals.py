@@ -98,34 +98,86 @@ def _ema_last(values, period):
     return series[-1] if series else None
 
 
-def score_technical(ohlcv):
-    """Return a 0-100 composite technical strength score from OHLCV data."""
+def detect_direction(ohlcv):
+    """Return 'long'/'short' from EMA-stack trend, MACD state, then crossover; None if unclear."""
+    try:
+        closes = [c[4] for c in ohlcv]
+        if len(closes) < config.RSI_PERIOD + 1:
+            return None
+        price = closes[-1]
+        ema20 = _ema_last(closes, config.EMA_FAST)
+        ema50 = _ema_last(closes, config.EMA_MID)
+        ema200 = _ema_last(closes, config.EMA_SLOW)
+        macd_line, signal_line = _macd(closes)
+        macd_bull = bool(macd_line and signal_line and macd_line[-1] > signal_line[-1])
+        macd_bear = bool(macd_line and signal_line and macd_line[-1] < signal_line[-1])
+
+        # Primary: full EMA-stack trend alignment — the trend-following core.
+        if ema20 and ema50 and ema200:
+            if price > ema20 > ema50 > ema200:
+                return "long"
+            if price < ema20 < ema50 < ema200:
+                return "short"
+
+        # Secondary: short/medium EMA alignment confirmed by MACD state.
+        if ema20 and ema50:
+            if price < ema20 < ema50 and macd_bear:
+                return "short"
+            if price > ema20 > ema50 and macd_bull:
+                return "long"
+
+        # Fallback: a fresh MACD crossover.
+        cross = _macd_cross(closes)
+        if cross == "bullish":
+            return "long"
+        if cross == "bearish":
+            return "short"
+        return None
+    except Exception as exc:  # noqa: BLE001
+        log.error("detect_direction failed: %s", exc)
+        return None
+
+
+def score_technical(ohlcv, direction):
+    """Return a 0-100 score for how strongly the indicators confirm `direction`."""
     try:
         closes = [c[4] for c in ohlcv]
         volumes = [c[5] for c in ohlcv]
-        if len(closes) < config.RSI_PERIOD + 1:
+        if len(closes) < config.RSI_PERIOD + 1 or direction not in ("long", "short"):
             return 0.0
+        bullish = direction == "long"
         score = 0.0
-
-        rsi = _rsi(closes, config.RSI_PERIOD)
-        if rsi < config.RSI_OVERSOLD or rsi > config.RSI_OVERBOUGHT:
-            score += config.TS_RSI_WEIGHT
-
-        if _macd_cross(closes) in ("bullish", "bearish"):
-            score += config.TS_MACD_WEIGHT
 
         price = closes[-1]
         ema20 = _ema_last(closes, config.EMA_FAST)
         ema50 = _ema_last(closes, config.EMA_MID)
         ema200 = _ema_last(closes, config.EMA_SLOW)
-        if ema20 and ema50 and ema200:
-            if price > ema20 > ema50 > ema200 or price < ema20 < ema50 < ema200:
-                score += config.TS_EMA_STRONG
-            else:
-                score += config.TS_EMA_MIXED
-        else:
+
+        # EMA trend confirmation: full stack is strongest, short/medium is mixed.
+        if ema20 and ema50 and ema200 and (
+            (bullish and price > ema20 > ema50 > ema200)
+            or (not bullish and price < ema20 < ema50 < ema200)
+        ):
+            score += config.TS_EMA_STRONG
+        elif ema20 and ema50 and (
+            (bullish and price > ema20 > ema50)
+            or (not bullish and price < ema20 < ema50)
+        ):
             score += config.TS_EMA_MIXED
 
+        # MACD state aligned with the trade direction (tie credits the detected trend).
+        macd_line, signal_line = _macd(closes)
+        if macd_line and signal_line:
+            diff = macd_line[-1] - signal_line[-1]
+            if (bullish and diff >= 0) or (not bullish and diff <= 0):
+                score += config.TS_MACD_WEIGHT
+
+        # RSI on the correct side of 50 for the trend.
+        rsi = _rsi(closes, config.RSI_PERIOD)
+        if (bullish and rsi > 50) or (not bullish and rsi < 50):
+            score += config.TS_RSI_WEIGHT
+
+        # Volume confirmation.
         if len(volumes) > 1:
             avg_vol = sum(volumes[:-1]) / len(volumes[:-1])
             if avg_vol > 0 and volumes[-1] > config.VOLUME_CONFIRM_MULT * avg_vol:
@@ -135,38 +187,6 @@ def score_technical(ohlcv):
     except Exception as exc:  # noqa: BLE001
         log.error("score_technical failed: %s", exc)
         return 0.0
-
-
-def detect_direction(ohlcv, technical_score):
-    """Return 'long'/'short' from RSI, EMA structure, and MACD; None if unclear."""
-    try:
-        closes = [c[4] for c in ohlcv]
-        if len(closes) < config.RSI_PERIOD + 1:
-            return None
-        rsi = _rsi(closes, config.RSI_PERIOD)
-        price = closes[-1]
-        ema20 = _ema_last(closes, config.EMA_FAST)
-        ema50 = _ema_last(closes, config.EMA_MID)
-        ema200 = _ema_last(closes, config.EMA_SLOW)
-        cross = _macd_cross(closes)
-
-        if ema20 and rsi < config.RSI_LONG_THRESHOLD and price > ema20:
-            return "long"
-        if ema20 and rsi > config.RSI_SHORT_THRESHOLD and price < ema20:
-            return "short"
-        if cross == "bullish":
-            return "long"
-        if cross == "bearish":
-            return "short"
-        if ema20 and ema50 and ema200:
-            if price > ema20 > ema50 > ema200:
-                return "long"
-            if price < ema20 < ema50 < ema200:
-                return "short"
-        return None
-    except Exception as exc:  # noqa: BLE001
-        log.error("detect_direction failed: %s", exc)
-        return None
 
 
 def score_kalshi(scan_result):
@@ -256,10 +276,10 @@ async def generate_signals(scan_results):
                 continue
 
             if sr.market == "crypto":
-                tech_score = score_technical(sr.ohlcv)
-                direction = detect_direction(sr.ohlcv, tech_score)
+                direction = detect_direction(sr.ohlcv)
                 if direction is None:
                     continue
+                tech_score = score_technical(sr.ohlcv, direction)
                 confidence = tech_score / 100.0
             elif sr.market == "kalshi":
                 confidence, direction = score_kalshi(sr)
