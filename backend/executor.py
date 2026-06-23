@@ -254,6 +254,23 @@ async def monitor_positions(db):
             if price is None or price <= 0:
                 continue
 
+            # Peak tracking (instrumentation only — records high-water profit %
+            # of each trade so exit thresholds can be tuned from real data).
+            try:
+                _entry = trade.get("entry_price") or 0
+                _dir = trade.get("direction")
+                if _entry > 0:
+                    if _dir in ("long", "yes"):
+                        _cur_pct = (price - _entry) / _entry * 100
+                    else:
+                        _cur_pct = (_entry - price) / _entry * 100
+                    _prev_peak = trade.get("peak_pnl_pct") or 0
+                    if _cur_pct > _prev_peak:
+                        await db.update_trade_fields(trade["id"], {"peak_pnl_pct": round(_cur_pct, 3)})
+                        trade["peak_pnl_pct"] = round(_cur_pct, 3)
+            except Exception as exc:  # noqa: BLE001
+                log.error("peak tracking failed for %s: %s", trade.get("id"), exc)
+
             await update_trailing_stop(trade, price, db)
 
             direction = trade.get("direction")

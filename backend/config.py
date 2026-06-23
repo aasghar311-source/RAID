@@ -82,7 +82,7 @@ TRAIL_TRIGGER_PCT  = 0.01
 TRAIL_STEP_PCT     = 0.005
 ADVERSE_MOVE_PCT   = 0.04   # override fires only on violent moves (2x stop), not at stop level
 AI_OVERRIDE_EXIT_ENABLED = True   # set False to fully disable discretionary exits
-MAX_HOLD_HOURS = 8           # close trades older than this if not already SL/TP'd (frees stuck slots)
+MAX_HOLD_HOURS = 3           # close trades older than this if not already SL/TP'd (frees stuck slots)
 MAX_HOLD_EXIT_ENABLED = True # set False to disable stale-trade exits
 
 # --- EOD close (Phase 2 stocks/options) -----------------------------------
