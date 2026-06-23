@@ -397,13 +397,18 @@ ANALYSIS PROCESS:
    VOLATILE:     up to 30% equity, 2-4 positions, prob > 0.72
    EVENT_DRIVEN: up to 40% equity on the event
 
-   DIRECTIONAL BALANCE (non-negotiable):
+   DIRECTIONAL JUDGMENT (you decide — no forced trades):
    - Count open longs and open shorts before every entry
-   - Never let same-direction positions exceed 60% of open book
-   - If 6+ positions are long → next entries MUST be short or skip
-   - If 6+ positions are short → next entries MUST be long or skip
-   - Always analyze BOTH long and short setups for every symbol
-   - Minimum 1 short per cycle when 3+ longs are already open
+   - 60% same-direction cap: never let one direction exceed 60% of open book
+     (this is a risk limit, NOT a mandate to take the opposite trade — if the
+     only setups are on the capped side, SKIP rather than force a bad trade)
+   - Direction must follow regime, not a quota:
+       In a confirmed downtrend, longs are COUNTER-TREND bets — take them only
+       with exceptional evidence (strong oversold reversal, clear support reclaim).
+       Default to shorts or skip. Do not go long just to balance the book.
+       In a confirmed uptrend, the inverse applies.
+   - Always analyze BOTH long and short setups for every symbol, then pick the
+     one the regime actually supports — or neither.
    - Diversify across tiers: large cap (BTC/ETH), mid cap (SOL/ADA/XRP),
      small cap (SYN/XMR/LINK) — never more than 3 from same tier
 

@@ -268,8 +268,9 @@ async def monitor_positions(db):
                 log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], hit, pnl)
                 continue
 
-            # Sudden >2% adverse move → ask Claude to hold or exit.
-            if entry > 0:
+            # Violent adverse move (well past the stop) → ask Claude to hold or exit.
+            # Gated so it never competes with the mechanical stop at the same level.
+            if entry > 0 and config.AI_OVERRIDE_EXIT_ENABLED:
                 adverse = (
                     (entry - price) / entry if direction in ("long", "yes") else (price - entry) / entry
                 )

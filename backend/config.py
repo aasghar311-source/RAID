@@ -80,7 +80,8 @@ KALSHI_SL_PCT      = 0.50
 KALSHI_TP_PRICE    = 0.95
 TRAIL_TRIGGER_PCT  = 0.01
 TRAIL_STEP_PCT     = 0.005
-ADVERSE_MOVE_PCT   = 0.02
+ADVERSE_MOVE_PCT   = 0.04   # override fires only on violent moves (2x stop), not at stop level
+AI_OVERRIDE_EXIT_ENABLED = True   # set False to fully disable discretionary exits
 
 # --- EOD close (Phase 2 stocks/options) -----------------------------------
 EOD_CLOSE_HOUR = 16
