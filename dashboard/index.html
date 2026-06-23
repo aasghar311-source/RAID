@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAID · Trading Dashboard</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg:       #07070f;
+      --surface:  #0e0e1c;
+      --border:   #18182c;
+      --border2:  #111120;
+      --text:     #d8d8ee;
+      --muted:    #444460;
+      --faint:    #1e1e30;
+      --green:    #00e87a;
+      --red:      #ff3d5a;
+      --purple:   #7c6eff;
+      --yellow:   #f5c542;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ──────────────────────────────────────────── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .logo {
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 5px;
+      color: var(--purple);
+      text-transform: uppercase;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .live-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .pulse-dot.error { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+    .pulse-dot.idle  { background: var(--muted); box-shadow: none; animation: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .countdown {
+      font-size: 11px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 72px;
+      text-align: right;
+    }
+
+    /* ── BANNERS ─────────────────────────────────────────── */
+    .banner {
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+    .banner.setup {
+      background: rgba(124,110,255,.1);
+      border: 1px solid rgba(124,110,255,.3);
+      color: var(--purple);
+    }
+    .banner.error {
+      background: rgba(255,61,90,.08);
+      border: 1px solid rgba(255,61,90,.3);
+      color: var(--red);
+    }
+    .banner code {
+      background: rgba(255,255,255,.07);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: 'SF Mono', monospace;
+    }
+
+    /* ── MAIN LAYOUT ─────────────────────────────────────── */
+    .main {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    /* ── STATS GRID ──────────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 1100px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 640px)  { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .stat-value.green  { color: var(--green); }
+    .stat-value.red    { color: var(--red); }
+    .stat-value.purple { color: var(--purple); }
+    .stat-value.white  { color: var(--text); }
+    .stat-value.yellow { color: var(--yellow); }
+
+    /* ── SECTION CARDS ───────────────────────────────────── */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--muted);
+    }
+
+    .badge {
+      background: var(--faint);
+      color: var(--purple);
+      font-size: 11px;
+      font-weight: 800;
+      padding: 2px 9px;
+      border-radius: 20px;
+    }
+
+    /* ── TABLES ──────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      padding: 9px 18px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      background: rgba(255,255,255,.02);
+      border-bottom: 1px solid var(--border2);
+      white-space: nowrap;
+    }
+
+    tbody tr { border-bottom: 1px solid var(--border2); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,.02); }
+
+    td {
+      padding: 11px 18px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .sym {
+      font-weight: 800;
+      font-size: 13px;
+      color: #c8c8e8;
+    }
+
+    .chip {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+
+    .chip.long  { color: var(--green); background: rgba(0,232,122,.1); }
+    .chip.short { color: var(--red);   background: rgba(255,61,90,.1); }
+
+    .chip.tp  { color: var(--green);  background: rgba(0,232,122,.1); }
+    .chip.sl  { color: var(--red);    background: rgba(255,61,90,.1); }
+    .chip.man { color: var(--muted);  background: rgba(100,100,130,.1); }
+
+    .pos  { color: var(--green); font-weight: 700; }
+    .neg  { color: var(--red);   font-weight: 700; }
+    .zero { color: var(--muted); }
+
+    .strat {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── EMPTY & FOOTER ──────────────────────────────────── */
+    .empty {
+      padding: 36px;
+      text-align: center;
+      color: var(--faint);
+      font-size: 13px;
+    }
+
+    .table-foot {
+      padding: 8px 18px;
+      text-align: right;
+      font-size: 11px;
+      color: #6a6a88;
+      border-top: 1px solid var(--border2);
+    }
+
+    /* ── LOADING SKELETON ────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--faint) 25%, #222236 50%, var(--faint) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 4px;
+      height: 20px;
+      width: 80px;
+    }
+
+    @keyframes shimmer { to { background-position: -200% 0; } }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">RAID</div>
+  <div class="header-right">
+    <div class="live-badge">
+      <div class="pulse-dot idle" id="pulseDot"></div>
+      <span id="statusText" style="color:var(--muted)">CONNECTING</span>
+    </div>
+    <div class="countdown" id="countdownEl">refresh in 15s</div>
+  </div>
+</div>
+
+<div class="main">
+  <div id="setupBanner" style="display:none" class="banner setup">
+    ⚠️ Drop your Supabase anon key: open this file, find <code>YOUR_ANON_KEY</code> at the top of the script, replace it. Anon key is public-safe.
+  </div>
+  <div id="errorBanner" style="display:none" class="banner error"></div>
+
+  <!-- Stats Row -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Equity</div>
+      <div class="stat-value white" id="sEquity">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value white" id="sPnl">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win Rate</div>
+      <div class="stat-value purple" id="sWinRate">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open Positions</div>
+      <div class="stat-value white" id="sOpen">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Closed Trades</div>
+      <div class="stat-value white" id="sTotal">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg P&amp;L / Trade</div>
+      <div class="stat-value white" id="sAvg">—</div>
+    </div>
+  </div>
+
+  <!-- Open Positions -->
+  <div class="section">
+    <div class="section-head">
+      <span class="section-title">Open Positions</span>
+      <span class="badge" id="openBadge">—</span>
+    </div>
+    <div class="table-wrap" id="openTable">
+      <div class="empty">Loading…</div>
+    </div>
+    <div class="table-foot" id="unrealUpdate"></div>
+  </div>
+
+  <!-- Closed Trades -->
+  <div class="section">
+    <div class="section-head">
+      <span class="section-title">Closed Trades</span>
+      <span class="badge" id="closedBadge">—</span>
+    </div>
+    <div class="table-wrap" id="closedTable">
+      <div class="empty">Loading…</div>
+    </div>
+    <div class="table-foot" id="lastUpdate"></div>
+  </div>
+</div>
+
+<script>
+  /* ─── CONFIG — swap YOUR_ANON_KEY below ─── */
+  const SUPABASE_URL      = 'https://wvihfkedinkekkoqbqtg.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2aWhma2VkaW5rZWtrb3FicXRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNDk4NDYsImV4cCI6MjA5NzcyNTg0Nn0.jyV0FUu0dtJ0i3-FcqvFug5ntmu9ZWn4JeZzXBnCFiY';
+  const INITIAL_EQUITY    = 4000;
+  const REFRESH_SEC       = 15;
+  const KRAKEN_OPEN_FEE_PCT = 0.0016;   // taker fee on the entry side (one side)
+
+  /* ─────────────────────────────────────────── */
+
+  let ticker;
+  let remaining = REFRESH_SEC;
+  let openTradesCache = [];   // latest open trades, used by the unrealized-PnL refresher
+
+  const hdrs = {
+    'apikey'        : SUPABASE_ANON_KEY,
+    'Authorization' : `Bearer ${SUPABASE_ANON_KEY}`,
+    'Content-Type'  : 'application/json'
+  };
+
+  async function sbFetch(path) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: hdrs });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`${res.status} — ${body || res.statusText}`);
+    }
+    return res.json();
+  }
+
+  /* Format helpers */
+  const fmt$ = (v, dp = 2) =>
+    (v == null) ? '—' : (parseFloat(v) >= 0 ? '+' : '') +
+    '$' + Math.abs(parseFloat(v)).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+
+  const fmtEntry = v =>
+    (v == null) ? '—' : '$' + parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+
+  const fmtSize = v =>
+    (v == null) ? '—' : '$' + parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const fmtProb = v => {
+    if (v == null) return '—';
+    const n = parseFloat(v);
+    if (isNaN(n)) return '—';
+    return (n <= 1 ? n * 100 : n).toFixed(0) + '%';
+  };
+
+  const pnlClass = v => {
+    const n = parseFloat(v ?? 0);
+    return n > 0 ? 'pos' : n < 0 ? 'neg' : 'zero';
+  };
+
+  function duration(ts) {
+    if (!ts) return '—';
+    const ms = Date.now() - new Date(ts).getTime();
+    const m = Math.floor(ms / 60000);
+    const h = Math.floor(m / 60);
+    const d = Math.floor(h / 24);
+    if (d > 0) return `${d}d ${h % 24}h`;
+    if (h > 0) return `${h}h ${m % 60}m`;
+    return `${m}m`;
+  }
+
+  function sideChip(s) {
+    if (!s) return '—';
+    const up = s.toUpperCase();
+    const cls = (up === 'LONG' || up === 'BUY' || up === 'UP' || up === 'YES') ? 'long' : 'short';
+    const label = (up === 'LONG' || up === 'BUY' || up === 'UP' || up === 'YES') ? 'LONG' : 'SHORT';
+    return `<span class="chip ${cls}">${label}</span>`;
+  }
+
+  function reasonChip(r) {
+    if (!r) return '—';
+    if (r === 'take_profit')  return `<span class="chip tp">TP</span>`;
+    if (r === 'stop_loss')    return `<span class="chip sl">SL</span>`;
+    if (r === 'manual_close') return `<span class="chip man">MANUAL</span>`;
+    return `<span class="chip man">${r.toUpperCase().replace(/_/g, ' ')}</span>`;
+  }
+
+  /* Render open positions
+     Columns: Symbol | Side | Entry | Size | SL | TP | Prob | Unreal. P&L */
+  function renderOpen(rows) {
+    openTradesCache = rows || [];
+    document.getElementById('openBadge').textContent = rows.length;
+    if (rows.length === 0) {
+      document.getElementById('openTable').innerHTML = '<div class="empty">No open positions</div>';
+      document.getElementById('unrealUpdate').textContent = '';
+      return;
+    }
+    document.getElementById('openTable').innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Side</th>
+            <th>Entry</th>
+            <th>Size</th>
+            <th>SL</th>
+            <th>TP</th>
+            <th>Prob</th>
+            <th>Unreal. P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((t, i) => `
+            <tr>
+              <td class="sym">${t.symbol || '—'}</td>
+              <td>${sideChip(t.direction)}</td>
+              <td>${fmtEntry(t.entry_price)}</td>
+              <td>${fmtSize(t.size_usd)}</td>
+              <td>${fmtEntry(t.sl)}</td>
+              <td>${fmtEntry(t.tp)}</td>
+              <td>${fmtProb(t.predicted_prob ?? t.confidence)}</td>
+              <td class="upnl" id="upnl-${i}" style="color:var(--muted)">…</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+    fetchUnrealizedPnL();
+  }
+
+  /* Kraken returns canonical pair names (e.g. XBTUSD -> XXBTZUSD). Match loosely. */
+  function krakenMatch(result, symbol) {
+    if (!result || !symbol) return null;
+    if (result[symbol]) return result[symbol];
+    const keys = Object.keys(result);
+    const base = symbol.replace(/USD$/, '');
+    const k =
+      keys.find(key => key === symbol) ||
+      keys.find(key => key.replace(/^[XZ]/, '').replace('ZUSD', 'USD') === symbol) ||
+      keys.find(key => key.endsWith(symbol)) ||
+      keys.find(key => key.includes(base));
+    return k ? result[k] : null;
+  }
+
+  /* Live unrealized PnL from Kraken public ticker — refreshes every 30s */
+  async function fetchUnrealizedPnL() {
+    const rows = openTradesCache;
+    if (!rows || rows.length === 0) return;
+    const symbols = [...new Set(rows.map(t => t.symbol).filter(Boolean))];
+    if (symbols.length === 0) return;
+
+    let result = {};
+    try {
+      const res = await fetch('https://api.kraken.com/0/public/Ticker?pair=' + encodeURIComponent(symbols.join(',')));
+      const data = await res.json();
+      result = (data && data.result) || {};
+    } catch (e) {
+      rows.forEach((t, i) => {
+        const el = document.getElementById('upnl-' + i);
+        if (el) { el.textContent = '—'; el.style.color = 'var(--muted)'; }
+      });
+      return;
+    }
+
+    rows.forEach((t, i) => {
+      const el = document.getElementById('upnl-' + i);
+      if (!el) return;
+      const tick = krakenMatch(result, t.symbol);
+      const live = (tick && tick.c) ? parseFloat(tick.c[0]) : null;
+      const entry = parseFloat(t.entry_price);
+      const size = parseFloat(t.size_usd);
+      if (live == null || isNaN(live) || !entry || !size) {
+        el.textContent = '—';
+        el.style.color = 'var(--muted)';
+        return;
+      }
+      const isLong = ['long', 'buy', 'up', 'yes'].includes((t.direction || '').toLowerCase());
+      const gross = isLong
+        ? (live - entry) / entry * size
+        : (entry - live) / entry * size;
+      const feeOpen = size * KRAKEN_OPEN_FEE_PCT;
+      const upnl = gross - feeOpen;
+      el.textContent = (upnl >= 0 ? '+$' : '-$') +
+        Math.abs(upnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      el.style.color = upnl >= 0 ? 'var(--green)' : 'var(--red)';
+    });
+
+    document.getElementById('unrealUpdate').textContent =
+      'Unrealized PnL updated ' + new Date().toLocaleTimeString();
+  }
+
+  /* Render closed trades */
+  function renderClosed(rows) {
+    document.getElementById('closedBadge').textContent = rows.length;
+    if (rows.length === 0) {
+      document.getElementById('closedTable').innerHTML = '<div class="empty">No closed trades yet</div>';
+      return;
+    }
+    document.getElementById('closedTable').innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Side</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>P&amp;L</th>
+            <th>Close</th>
+            <th>Held</th>
+            <th>Strategy</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(t => `
+            <tr>
+              <td class="sym">${t.symbol || '—'}</td>
+              <td>${sideChip(t.direction)}</td>
+              <td>${fmtEntry(t.entry_price)}</td>
+              <td>${fmtEntry(t.exit_price)}</td>
+              <td class="${pnlClass(t.pnl)}">${fmt$(t.pnl)}</td>
+              <td>${reasonChip(t.close_reason)}</td>
+              <td style="color:var(--muted)">${t.market || '—'}</td>
+              <td class="strat">${t.strategy || t.strategy_name || t.bot_name || '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  /* Main data load */
+  async function load() {
+    if (SUPABASE_ANON_KEY === 'YOUR_ANON_KEY') {
+      document.getElementById('setupBanner').style.display = 'block';
+      document.getElementById('pulseDot').className = 'pulse-dot idle';
+      document.getElementById('statusText').textContent = 'NO KEY';
+      document.getElementById('openTable').innerHTML  = '<div class="empty">Waiting for anon key…</div>';
+      document.getElementById('closedTable').innerHTML = '<div class="empty">Waiting for anon key…</div>';
+      return;
+    }
+
+    try {
+      const [open, closed] = await Promise.all([
+        sbFetch('trades?status=eq.open'),
+        sbFetch('trades?status=eq.closed&order=close_time.desc&limit=200')
+      ]);
+
+      /* Compute stats */
+      const hasPnl   = closed.filter(t => t.pnl != null);
+      const totalPnl = hasPnl.reduce((s, t) => s + parseFloat(t.pnl), 0);
+      const winners  = hasPnl.filter(t => parseFloat(t.pnl) > 0).length;
+      const winRate  = hasPnl.length ? (winners / hasPnl.length * 100).toFixed(1) : null;
+      const avgPnl   = hasPnl.length ? totalPnl / hasPnl.length : null;
+      const equity   = INITIAL_EQUITY + totalPnl;
+
+      /* Stats cards */
+      const eqEl = document.getElementById('sEquity');
+      eqEl.textContent = '$' + equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      eqEl.className = 'stat-value ' + (equity >= INITIAL_EQUITY ? 'green' : 'red');
+
+      const pnlEl = document.getElementById('sPnl');
+      pnlEl.textContent = fmt$(totalPnl);
+      pnlEl.className = 'stat-value ' + (totalPnl >= 0 ? 'green' : 'red');
+
+      document.getElementById('sWinRate').textContent = winRate != null ? winRate + '%' : '—';
+      document.getElementById('sOpen').textContent    = open.length;
+      document.getElementById('sTotal').textContent   = hasPnl.length;
+
+      const avgEl = document.getElementById('sAvg');
+      avgEl.textContent = avgPnl != null ? fmt$(avgPnl) : '—';
+      avgEl.className = 'stat-value ' + (avgPnl == null ? 'white' : avgPnl >= 0 ? 'green' : 'red');
+
+      renderOpen(open);
+      renderClosed(closed);
+
+      /* Status */
+      document.getElementById('pulseDot').className = 'pulse-dot';
+      document.getElementById('statusText').style.color = 'var(--green)';
+      document.getElementById('statusText').textContent = 'LIVE';
+      document.getElementById('errorBanner').style.display = 'none';
+      document.getElementById('lastUpdate').textContent =
+        'Updated ' + new Date().toLocaleTimeString();
+
+    } catch (err) {
+      const el = document.getElementById('errorBanner');
+      el.style.display = 'block';
+      el.textContent = '⚠️  Supabase error: ' + err.message;
+      document.getElementById('pulseDot').className = 'pulse-dot error';
+      document.getElementById('statusText').style.color = 'var(--red)';
+      document.getElementById('statusText').textContent = 'ERROR';
+    }
+  }
+
+  /* Countdown + auto-refresh */
+  function startTimer() {
+    clearInterval(ticker);
+    remaining = REFRESH_SEC;
+    ticker = setInterval(() => {
+      remaining--;
+      document.getElementById('countdownEl').textContent =
+        remaining > 0 ? `refresh in ${remaining}s` : 'refreshing…';
+      if (remaining <= 0) {
+        remaining = REFRESH_SEC;
+        load();
+      }
+    }, 1000);
+  }
+
+  load();
+  startTimer();
+  /* Live unrealized PnL refreshes independently every 30s */
+  setInterval(fetchUnrealizedPnL, 30000);
+</script>
+</body>
+</html>
