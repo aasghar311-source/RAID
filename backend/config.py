@@ -30,7 +30,7 @@ BOT_LIVE_DATE          = "2026-07-20"      # backward compat alias
 # --- Brain / cycle --------------------------------------------------------
 BRAIN_CYCLE_MINUTES    = 55
 MAX_OPEN_TRADES        = 8
-MAX_ENTRIES_PER_CYCLE  = 3
+MAX_ENTRIES_PER_CYCLE  = 5
 CLAUDE_DAILY_BUDGET_USD = 7.0
 CLAUDE_MODEL           = "claude-sonnet-4-6"
 
@@ -138,7 +138,7 @@ HEALTH_CHECK_PORT = 8080
 # --- Legacy constants (kept so executor.py / gate.py import without error) --
 BASE_TRADE_SIZE    = 100.0
 RISK_REWARD_RATIO  = 2.0
-MIN_CONFIDENCE     = 0.55
+MIN_CONFIDENCE     = 0.50
 CLAUDE_GRAY_ZONE_MIN    = 0.70
 CLAUDE_GRAY_ZONE_MAX    = 0.80
 CLAUDE_SKIP_THRESHOLD   = 0.85
@@ -146,7 +146,7 @@ CLAUDE_BUDGET_DAILY     = CLAUDE_DAILY_BUDGET_USD   # alias
 BUDGET_TECH_THRESHOLD   = 75.0
 CLAUDE_MAX_TOKENS       = 100
 KILL_SWITCH_ACTIVE      = False
-MAX_ENTRIES_PER_CYCLE   = 3
+MAX_ENTRIES_PER_CYCLE   = 5
 PULLBACK_BAND_PCT       = 0.01
 PULLBACK_LOOKBACK       = 12
 PULLBACK_MIN_BOUNCE     = 0.005

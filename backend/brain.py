@@ -369,8 +369,8 @@ ANALYSIS PROCESS:
 
 2. Entry rules:
    TRENDING: enter on pullback to EMA20 only — never chase >3% from EMA20
-   SIDEWAYS: only enter prob > 0.78
-   VOLATILE: only enter prob > 0.82
+   SIDEWAYS: only enter prob > 0.65
+   VOLATILE: only enter prob > 0.72
    NO_EDGE:  always skip
 
 3. Capital allocation by regime:
@@ -380,9 +380,8 @@ ANALYSIS PROCESS:
    EVENT_DRIVEN: up to 40% equity on the event
 
 4. Market session (CDT):
-   Best crypto hours: 8am–12pm, 8pm–12am
-   Avoid 2am–6am unless CRITICAL trajectory
-   Never force trades in dead sessions
+   PAPER MODE: trade 24/7 — accumulate data aggressively, no session restrictions
+   Best live hours: 8am–12pm, 8pm–12am (enforced after July 20 go-live)
 
 5. Probability must be calibrated.
    If you say 0.70 you should win 70% of the time.
@@ -817,7 +816,7 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
     hour = now_cdt.hour
     in_prime_session = (8 <= hour < 12) or (20 <= hour < 24)
     in_dead_session = 2 <= hour < 6
-    if in_dead_session and trajectory_status != "CRITICAL":
+    if in_dead_session and not config.PAPER_MODE and trajectory_status != "CRITICAL":
         log.info("BRAIN: dead session hour=%d CDT — skipping entries (not CRITICAL)", hour)
         await _update_sizing_state(db, trajectory_status)
         return
