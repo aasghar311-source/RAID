@@ -30,7 +30,7 @@ BOT_LIVE_DATE          = "2026-07-20"      # backward compat alias
 # --- Brain / cycle --------------------------------------------------------
 BRAIN_CYCLE_MINUTES    = 30
 MAX_OPEN_TRADES        = 25
-MAX_ENTRIES_PER_CYCLE  = 5
+MAX_ENTRIES_PER_CYCLE  = 10
 CLAUDE_DAILY_BUDGET_USD = 7.0
 CLAUDE_MODEL           = "claude-sonnet-4-6"
 
@@ -149,7 +149,7 @@ CLAUDE_BUDGET_DAILY     = CLAUDE_DAILY_BUDGET_USD   # alias
 BUDGET_TECH_THRESHOLD   = 75.0
 CLAUDE_MAX_TOKENS       = 100
 KILL_SWITCH_ACTIVE      = False
-MAX_ENTRIES_PER_CYCLE   = 5
+MAX_ENTRIES_PER_CYCLE   = 10
 PULLBACK_BAND_PCT       = 0.01
 PULLBACK_LOOKBACK       = 12
 PULLBACK_MIN_BOUNCE     = 0.005
