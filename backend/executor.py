@@ -268,6 +268,23 @@ async def monitor_positions(db):
                 log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], hit, pnl)
                 continue
 
+            # Max-hold exit: close genuinely stale trades that never hit SL/TP,
+            # so they stop occupying a slot. SL/TP above always takes priority.
+            if config.MAX_HOLD_EXIT_ENABLED and trade.get("open_time"):
+                try:
+                    opened = datetime.fromisoformat(str(trade["open_time"]).replace("Z", "+00:00"))
+                    hours_open = (datetime.now(timezone.utc) - opened).total_seconds() / 3600.0
+                    if hours_open >= config.MAX_HOLD_HOURS:
+                        pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
+                        await db.close_trade(trade["id"], price, pnl, "max_hold_exit")
+                        log.info(
+                            "TRADE CLOSE %s %s reason=max_hold_exit hours=%.1f pnl=$%.2f",
+                            trade["market"], trade["symbol"], hours_open, pnl,
+                        )
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    log.error("max_hold check failed for %s: %s", trade.get("id"), exc)
+
             # Violent adverse move (well past the stop) → ask Claude to hold or exit.
             # Gated so it never competes with the mechanical stop at the same level.
             if entry > 0 and config.AI_OVERRIDE_EXIT_ENABLED:
