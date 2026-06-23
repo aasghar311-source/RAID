@@ -387,7 +387,7 @@ ANALYSIS PROCESS:
 3. Capital allocation by regime:
    TRENDING:     up to 60% equity, 3–6 positions
    SIDEWAYS:     up to 20% equity, 1–2 positions
-   VOLATILE:     up to 15% equity, highest conviction only
+   VOLATILE:     up to 30% equity, 2-4 positions, prob > 0.72
    EVENT_DRIVEN: up to 40% equity on the event
 
    DIRECTIONAL BALANCE (non-negotiable):
