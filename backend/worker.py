@@ -319,14 +319,31 @@ def _health_payload():
 
 async def _handle_health_conn(reader, writer):
     try:
+        request_line = b""
         try:
+            request_line = await asyncio.wait_for(reader.readuntil(b"\r\n"), timeout=5)
             await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
         except (asyncio.IncompleteReadError, asyncio.TimeoutError, asyncio.LimitOverrunError):
             pass
-        body = json.dumps(_health_payload()).encode("utf-8")
+
+        path = "/"
+        try:
+            parts = request_line.decode("latin-1").split(" ")
+            if len(parts) >= 2:
+                path = parts[1].split("?")[0]
+        except Exception:  # noqa: BLE001
+            path = "/"
+
+        if path == "/stats":
+            payload = await db.get_status_snapshot()
+        else:
+            payload = _health_payload()
+
+        body = json.dumps(payload).encode("utf-8")
         response = (
             b"HTTP/1.1 200 OK\r\n"
             b"Content-Type: application/json\r\n"
+            b"Access-Control-Allow-Origin: *\r\n"
             b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
             b"Connection: close\r\n\r\n" + body
         )

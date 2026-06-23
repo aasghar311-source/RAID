@@ -528,43 +528,74 @@ async def log_learning_adjustment(adj: dict):
 # ── DAILY SPEND (survives Railway restarts) ───────────────────────────────
 
 async def get_spend_today() -> float:
-    """Return today's persisted API spend from daily_stats, or 0.0.
-    Reads ai_spend first, falls back to api_spend_usd."""
+    """Return today's persisted API spend from daily_stats.api_spend_usd, or 0.0."""
     try:
         today = datetime.now(timezone.utc).date().isoformat()
         res = await (
             supabase.table("daily_stats")
-            .select("ai_spend, api_spend_usd")
+            .select("api_spend_usd")
             .eq("date", today)
             .limit(1)
             .execute()
         )
-        if res.data:
-            row = res.data[0]
-            val = row.get("ai_spend")
-            if val is None:
-                val = row.get("api_spend_usd")
-            if val is not None:
-                return float(val)
+        if res.data and res.data[0].get("api_spend_usd") is not None:
+            return float(res.data[0]["api_spend_usd"])
     except Exception as exc:  # noqa: BLE001
         log.error("get_spend_today failed: %s", exc)
     return 0.0
 
 
 async def persist_spend_today(spend: float) -> None:
-    """Merge-safe write of today's API spend to BOTH ai_spend and api_spend_usd,
-    so whichever column the terminal reads is correct. Updates only those two
-    fields, preserving pnl/total_trades/win_rate on the row."""
+    """Merge-safe write of today's API spend to daily_stats.api_spend_usd only."""
     try:
         today = datetime.now(timezone.utc).date().isoformat()
-        payload = {"ai_spend": round(spend, 4), "api_spend_usd": round(spend, 4)}
         existing = await (
             supabase.table("daily_stats").select("date").eq("date", today).limit(1).execute()
         )
         if existing.data:
-            await supabase.table("daily_stats").update(payload).eq("date", today).execute()
+            await (
+                supabase.table("daily_stats")
+                .update({"api_spend_usd": round(spend, 4)})
+                .eq("date", today)
+                .execute()
+            )
         else:
-            payload["date"] = today
-            await supabase.table("daily_stats").insert(payload).execute()
+            await (
+                supabase.table("daily_stats")
+                .insert({"date": today, "api_spend_usd": round(spend, 4)})
+                .execute()
+            )
     except Exception as exc:  # noqa: BLE001
         log.error("persist_spend_today failed: %s", exc)
+
+
+async def get_status_snapshot() -> dict:
+    """One-call status for the /stats endpoint."""
+    snap = {
+        "closed": 0, "open": 0, "closed_with_reasoning": 0,
+        "win_rate_pct": 0.0, "realized_pnl": 0.0, "equity": 0.0,
+        "api_spend_today": 0.0, "phase2_gate_cleared": False,
+    }
+    try:
+        closed = await supabase.table("trades").select(
+            "pnl, claude_reasoning", count="exact"
+        ).eq("status", "closed").execute()
+        rows = closed.data or []
+        snap["closed"] = closed.count if closed.count is not None else len(rows)
+        wins = sum(1 for r in rows if (r.get("pnl") or 0) > 0)
+        snap["realized_pnl"] = round(sum(float(r.get("pnl") or 0) for r in rows), 2)
+        if rows:
+            snap["win_rate_pct"] = round(100.0 * wins / len(rows), 1)
+        snap["closed_with_reasoning"] = sum(1 for r in rows if r.get("claude_reasoning"))
+        snap["phase2_gate_cleared"] = snap["closed_with_reasoning"] >= 10
+
+        open_res = await supabase.table("trades").select(
+            "id", count="exact"
+        ).eq("status", "open").execute()
+        snap["open"] = open_res.count if open_res.count is not None else len(open_res.data or [])
+
+        snap["equity"] = await get_equity()
+        snap["api_spend_today"] = await get_spend_today()
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_status_snapshot failed: %s", exc)
+    return snap
