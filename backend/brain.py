@@ -8,6 +8,7 @@ Full decision cycle every 55 minutes:
   Step 5 — Sizing state update (Kelly / optimal-f)
 """
 
+import ast
 import json
 import logging
 import math
@@ -387,7 +388,11 @@ ANALYSIS PROCESS:
    If you say 0.70 you should win 70% of the time.
    Do not inflate confidence.
 
-Respond ONLY with valid JSON. No prose. No markdown fences."""
+OUTPUT FORMAT (strict):
+Respond with ONE valid JSON object and nothing else — no prose, no markdown fences.
+Use DOUBLE QUOTES (") for every key and every string value. Do NOT use single
+quotes — this is JSON, not a Python dict. Use true/false/null (lowercase), not
+Python's True/False/None."""
 
 _USER_PROMPT_TEMPLATE = """TRAJECTORY THIS CYCLE:
 {trajectory_json}
@@ -497,12 +502,35 @@ async def _call_claude(
 
 
 def _parse_brain_response(text: str) -> dict:
-    """Strip markdown fences and parse the JSON brain response."""
+    """Parse the brain JSON response, tolerating single-quoted (Python-dict) output.
+
+    The prompt asks for strict JSON, but Claude occasionally returns Python-dict
+    style (single quotes). json.loads() rejects that, so fall back to
+    ast.literal_eval() (safe — literals only, no code execution).
+    """
     text = re.sub(r"```(?:json)?\n?", "", text).strip()
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise ValueError("No JSON object found in brain response")
-    return json.loads(match.group())
+    blob = match.group()
+
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError:
+        log.warning("BRAIN: json.loads failed — retrying with ast.literal_eval (single-quoted response)")
+
+    try:
+        result = ast.literal_eval(blob)
+    except (ValueError, SyntaxError):
+        # literal_eval can't read JSON true/false/null — map to Python and retry.
+        py = re.sub(r"\btrue\b", "True", blob)
+        py = re.sub(r"\bfalse\b", "False", py)
+        py = re.sub(r"\bnull\b", "None", py)
+        result = ast.literal_eval(py)
+
+    if not isinstance(result, dict):
+        raise ValueError("Brain response did not parse to a dict")
+    return result
 
 
 # ── STEP 4: PARSE AND EXECUTE ─────────────────────────────────────────────
