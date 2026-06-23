@@ -31,7 +31,7 @@ CDT = ZoneInfo("America/Chicago")
 _client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
 
 _daily_spend = 0.0
-_last_reset_date = ""
+_last_reset_date = datetime.now(timezone.utc).date().isoformat()
 _last_brain_cycle_time: float = 0.0   # unix timestamp of last completed cycle
 _consecutive_missed_cycles: int = 0
 _last_trajectory_status = "ON_TRACK"  # surfaced to the worker health endpoint
@@ -58,6 +58,13 @@ def reset_daily_spend():
 
 def get_daily_spend():
     return _daily_spend
+
+
+def set_daily_spend(value: float):
+    """Seed in-memory spend from the persisted DB value on startup."""
+    global _daily_spend, _last_reset_date
+    _daily_spend = value
+    _last_reset_date = datetime.now(timezone.utc).date().isoformat()
 
 
 def get_trajectory_status():
@@ -885,6 +892,7 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         recent_trades=recent_trades_ctx,
         controls=controls,
     )
+    await db.persist_spend_today(get_daily_spend())
 
     if brain_json is None:
         log.warning("BRAIN: no valid response from Claude this cycle")

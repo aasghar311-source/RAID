@@ -372,7 +372,8 @@ async def main():
     )
 
     server = await start_health_server()
-    brain.reset_daily_spend()
+    persisted = await db.get_spend_today()
+    brain.set_daily_spend(persisted)
 
     tasks = [
         asyncio.create_task(_exit_monitor_loop(db), name="exit_monitor"),

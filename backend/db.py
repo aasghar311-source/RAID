@@ -523,3 +523,48 @@ async def log_learning_adjustment(adj: dict):
         await supabase.table("learning_adjustments").insert(adj).execute()
     except Exception as exc:  # noqa: BLE001
         log.error("log_learning_adjustment failed: %s", exc)
+
+
+# ── DAILY SPEND (survives Railway restarts) ───────────────────────────────
+
+async def get_spend_today() -> float:
+    """Return today's persisted API spend from daily_stats, or 0.0.
+    Reads ai_spend first, falls back to api_spend_usd."""
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+        res = await (
+            supabase.table("daily_stats")
+            .select("ai_spend, api_spend_usd")
+            .eq("date", today)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            row = res.data[0]
+            val = row.get("ai_spend")
+            if val is None:
+                val = row.get("api_spend_usd")
+            if val is not None:
+                return float(val)
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_spend_today failed: %s", exc)
+    return 0.0
+
+
+async def persist_spend_today(spend: float) -> None:
+    """Merge-safe write of today's API spend to BOTH ai_spend and api_spend_usd,
+    so whichever column the terminal reads is correct. Updates only those two
+    fields, preserving pnl/total_trades/win_rate on the row."""
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+        payload = {"ai_spend": round(spend, 4), "api_spend_usd": round(spend, 4)}
+        existing = await (
+            supabase.table("daily_stats").select("date").eq("date", today).limit(1).execute()
+        )
+        if existing.data:
+            await supabase.table("daily_stats").update(payload).eq("date", today).execute()
+        else:
+            payload["date"] = today
+            await supabase.table("daily_stats").insert(payload).execute()
+    except Exception as exc:  # noqa: BLE001
+        log.error("persist_spend_today failed: %s", exc)
