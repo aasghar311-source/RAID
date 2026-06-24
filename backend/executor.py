@@ -302,6 +302,25 @@ async def monitor_positions(db):
                 except Exception as exc:  # noqa: BLE001
                     log.error("max_hold check failed for %s: %s", trade.get("id"), exc)
 
+            # No-progress exit: a trade that never went meaningfully green is a dud.
+            # Cut it early instead of letting it bleed to the 3h max-hold. SL/TP and
+            # max-hold above always take priority. Thresholds set from peak_pnl_pct data.
+            if config.NO_PROGRESS_EXIT_ENABLED and trade.get("open_time"):
+                try:
+                    opened_np = datetime.fromisoformat(str(trade["open_time"]).replace("Z", "+00:00"))
+                    mins_open = (datetime.now(timezone.utc) - opened_np).total_seconds() / 60.0
+                    peak = trade.get("peak_pnl_pct") or 0
+                    if mins_open >= config.NO_PROGRESS_MINUTES and peak < config.NO_PROGRESS_MIN_PEAK_PCT:
+                        pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
+                        await db.close_trade(trade["id"], price, pnl, "no_progress_exit")
+                        log.info(
+                            "TRADE CLOSE %s %s reason=no_progress_exit mins=%.0f peak=%.2f%% pnl=$%.2f",
+                            trade["market"], trade["symbol"], mins_open, peak, pnl,
+                        )
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    log.error("no_progress check failed for %s: %s", trade.get("id"), exc)
+
             # Violent adverse move (well past the stop) → ask Claude to hold or exit.
             # Gated so it never competes with the mechanical stop at the same level.
             if entry > 0 and config.AI_OVERRIDE_EXIT_ENABLED:

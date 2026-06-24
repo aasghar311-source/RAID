@@ -84,6 +84,12 @@ ADVERSE_MOVE_PCT   = 0.04   # override fires only on violent moves (2x stop), no
 AI_OVERRIDE_EXIT_ENABLED = True   # set False to fully disable discretionary exits
 MAX_HOLD_HOURS = 3           # close trades older than this if not already SL/TP'd (frees stuck slots)
 MAX_HOLD_EXIT_ENABLED = True # set False to disable stale-trade exits
+# No-progress exit: kill trades that never go meaningfully green (the dead-trade bucket).
+# Evidence: losing trades peaked at ~0.45-0.59% avg; winners showed green early. A trade still
+# under NO_PROGRESS_MIN_PEAK_PCT after NO_PROGRESS_MINUTES is behaving like the losing population.
+NO_PROGRESS_EXIT_ENABLED = True   # set False to disable
+NO_PROGRESS_MINUTES      = 45     # how long to give a trade to show real green
+NO_PROGRESS_MIN_PEAK_PCT = 0.5    # if peak_pnl_pct never reached this %, it's a dud
 
 # --- EOD close (Phase 2 stocks/options) -----------------------------------
 EOD_CLOSE_HOUR = 16
