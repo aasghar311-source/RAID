@@ -596,6 +596,35 @@ async def get_status_snapshot() -> dict:
 
         snap["equity"] = await get_equity()
         snap["api_spend_today"] = await get_spend_today()
+
+        # Calibration readout: for closed trades, bucket by stated probability
+        # and compare to actual win rate. Shows whether the brain's confidence
+        # is honest (e.g. a "0.70" bucket should win ~70%).
+        try:
+            cal = await supabase.table("trades").select(
+                "predicted_prob, pnl"
+            ).eq("status", "closed").execute()
+            buckets = {}
+            for r in (cal.data or []):
+                p = r.get("predicted_prob")
+                if p is None:
+                    continue
+                key = round(float(p), 1)  # 0.5, 0.6, 0.7, 0.8...
+                b = buckets.setdefault(key, {"n": 0, "wins": 0})
+                b["n"] += 1
+                if (r.get("pnl") or 0) > 0:
+                    b["wins"] += 1
+            snap["calibration"] = {
+                str(k): {
+                    "stated_pct": int(k * 100),
+                    "n": v["n"],
+                    "actual_win_pct": round(100.0 * v["wins"] / v["n"], 0) if v["n"] else 0,
+                }
+                for k, v in sorted(buckets.items())
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.error("calibration readout failed: %s", exc)
+            snap["calibration"] = {}
     except Exception as exc:  # noqa: BLE001
         log.error("get_status_snapshot failed: %s", exc)
     return snap
