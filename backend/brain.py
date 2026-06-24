@@ -353,6 +353,13 @@ SIZING RULES:
 Base: kelly_fraction × 0.25 × equity
   BEHIND:   ×1.5 multiplier on prob > 0.72 only
   CRITICAL: ×1.75 multiplier on prob > 0.78 only
+IMPORTANT — probability is an HONEST INPUT, never a dial to unlock size.
+These thresholds describe what an already-true high-conviction read earns;
+they are NOT a reason to report a higher number. Never raise a probability to
+reach a multiplier or to chase the goal. Decide probability FIRST, honestly,
+blind to size. If your honest read is 0.66, it is 0.66 and earns no multiplier —
+that is correct, not a missed opportunity. A trade is never improved by
+inflating its odds. Size follows honesty; honesty never bends to size.
   ON_TRACK or AHEAD: standard sizing, stay selective
 Volatility scalar: size × (0.15 / realized_vol_30d)
 Correlation penalty: -50% size if 3+ correlated pairs open (BTC/ETH/SOL/XRP group)
