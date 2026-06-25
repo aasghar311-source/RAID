@@ -794,9 +794,10 @@ async def _execute_brain_trades(
 # ── STEP 5: SIZING STATE ──────────────────────────────────────────────────
 
 async def _update_sizing_state(db, trajectory_status: str):
-    """Recalculate Kelly fraction and sizing mode from all closed trades."""
+    """Recalculate Kelly fraction and sizing mode from the last 30 closed trades
+    (rolling window — aligned with worker._refresh_sizing_state)."""
     try:
-        trades = await db.get_closed_trades_last_n(500)
+        trades = await db.get_closed_trades_last_n(30)
         total = len(trades)
         if total == 0:
             return
@@ -823,7 +824,7 @@ async def _update_sizing_state(db, trajectory_status: str):
         sizing_mode = "fractional_kelly"
         optimal_f = None
 
-        if total >= 50:
+        if total >= 20:
             sizing_mode = "optimal_f"
             if avg_loss > 0 and avg_win > 0:
                 # Ralph Vince optimal-f approximation.

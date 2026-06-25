@@ -595,6 +595,16 @@ async def get_status_snapshot() -> dict:
         snap["open"] = open_res.count if open_res.count is not None else len(open_res.data or [])
 
         snap["equity"] = await get_equity()
+        # Deployment headroom: how much of equity is in open positions vs the cap.
+        try:
+            _open = await get_open_trades()
+            _deployed = sum(float(t.get("size_usd") or 0) for t in _open)
+            _eq = snap["equity"] or 0
+            snap["deployed_usd"] = round(_deployed, 2)
+            snap["deployed_pct"] = round(100.0 * _deployed / _eq, 1) if _eq > 0 else 0.0
+            snap["deployment_cap_pct"] = round(config.MAX_EQUITY_DEPLOYED_PCT * 100, 1)
+        except Exception as exc:  # noqa: BLE001
+            log.error("deployment snapshot failed: %s", exc)
         snap["api_spend_today"] = await get_spend_today()
 
         # Calibration readout: for closed trades, bucket by stated probability
