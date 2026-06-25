@@ -72,10 +72,15 @@ async def scan_kraken():
             pairs_data = pairs_res.json().get("result", {})
 
             # All USD-quote pairs: altname -> canonical Ticker key.
+            # Exclude non-crypto symbols (forex/gold) listed in config.EXCLUDED_SYMBOLS.
+            excluded = set(getattr(config, "EXCLUDED_SYMBOLS", []))
             candidates = {}
             for pair_key, info in pairs_data.items():
-                if info.get("quote") in config.KRAKEN_QUOTES and info.get("altname"):
-                    candidates[info["altname"]] = pair_key
+                altname = info.get("altname")
+                if info.get("quote") in config.KRAKEN_QUOTES and altname:
+                    if altname in excluded:
+                        continue
+                    candidates[altname] = pair_key
             if not candidates:
                 return results
             canon_to_alt = {canon: alt for alt, canon in candidates.items()}

@@ -160,6 +160,52 @@ async def _brain_entry_gate(db_, controls: dict) -> bool:
     return True
 
 
+async def _refresh_sizing_state(db_):
+    """Recompute edge stats + Optimal F from the last 30 closed trades and
+    persist to sizing_state, so Kelly sizing reflects CURRENT performance.
+    Rolling 30-trade window: adapts to the calibrated brain, ignores old era."""
+    try:
+        recent = await db.get_closed_trades_last_n(30)
+        if not recent or len(recent) < 10:
+            return  # not enough data yet — leave sizing_state as-is
+        wins = [float(t.get("pnl") or 0) for t in recent if (t.get("pnl") or 0) > 0]
+        losses = [abs(float(t.get("pnl") or 0)) for t in recent if (t.get("pnl") or 0) <= 0]
+        n = len(recent)
+        win_rate = len(wins) / n if n else 0.0
+        avg_win = (sum(wins) / len(wins)) if wins else 0.0
+        avg_loss = (sum(losses) / len(losses)) if losses else 0.0
+        worst_loss = max(losses) if losses else 0.0
+        # Optimal F (Kelly for fixed payoff): f* = W - (1-W)/R, R = avg_win/avg_loss.
+        if avg_loss > 0 and avg_win > 0:
+            R = avg_win / avg_loss
+            optimal_f = win_rate - (1.0 - win_rate) / R
+        else:
+            optimal_f = 0.0
+        # Fractional Kelly applied to the configured default, never below floor,
+        # never above the default cap (so a bad window throttles, never inflates).
+        if optimal_f <= 0:
+            kelly_fraction = 0.01  # measured negative edge → minimum sizing
+        else:
+            kelly_fraction = min(optimal_f * 0.5, config.KELLY_FRACTION_DEFAULT)
+        await db.update_sizing_state({
+            "win_rate": round(win_rate, 4),
+            "avg_win": round(avg_win, 4),
+            "avg_loss": round(avg_loss, 4),
+            "worst_loss": round(worst_loss, 4),
+            "total_trades": n,
+            "optimal_f": round(optimal_f, 4),
+            "kelly_fraction": round(kelly_fraction, 4),
+            "sizing_mode": "fractional_kelly",
+        })
+        log.info(
+            "SIZING REFRESH: n=%d win_rate=%.2f avg_win=%.3f avg_loss=%.3f "
+            "optimal_f=%.3f kelly=%.3f",
+            n, win_rate, avg_win, avg_loss, optimal_f, kelly_fraction,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("_refresh_sizing_state failed: %s", exc)
+
+
 async def _run_brain_cycle(db_, controls: dict):
     """Scan → news enrichment → brain. Crypto only in Phase 1."""
     log.info("── Brain cycle start ──")
@@ -167,6 +213,10 @@ async def _run_brain_cycle(db_, controls: dict):
         if not controls.get("crypto_enabled", True):
             log.info("WORKER: crypto disabled by operator_controls — skipping")
             return
+
+        # Refresh Optimal F / Kelly from the last 30 closed trades BEFORE the
+        # brain sizes anything this cycle.
+        await _refresh_sizing_state(db_)
 
         scan_results = await scanner.scan_kraken()
         if not scan_results:
