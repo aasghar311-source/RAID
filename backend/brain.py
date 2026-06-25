@@ -263,6 +263,22 @@ def _compute_24h_change_pct(ohlcv: list) -> float:
     return round((closes[-1] / ref - 1) * 100, 2)
 
 
+def _htf_trend_label(ohlcv_1h: list) -> str:
+    """Compress 1-hour candles to a single trend label: up / down / sideways.
+    Based on price vs 1h EMA20/EMA50 — cheap, a few tokens for the prompt."""
+    closes = [float(c[4]) for c in (ohlcv_1h or []) if c[4] and float(c[4]) > 0]
+    if len(closes) < 20:
+        return "unknown"
+    ema20 = _ema_last(closes, 20)
+    ema50 = _ema_last(closes, 50) if len(closes) >= 50 else ema20
+    price = closes[-1]
+    if price > ema20 and ema20 >= ema50:
+        return "up"
+    if price < ema20 and ema20 <= ema50:
+        return "down"
+    return "sideways"
+
+
 def _build_asset_context(scan_result, news_info: dict) -> dict:
     """Build compressed per-asset context dict (<400 tokens) for Claude."""
     ohlcv = scan_result.ohlcv or []
@@ -291,6 +307,7 @@ def _build_asset_context(scan_result, news_info: dict) -> dict:
         "swing_highs": swing_highs,
         "swing_lows": swing_lows,
         "vol_30d": round(vol, 4),
+        "htf_1h_trend": _htf_trend_label(getattr(scan_result, "ohlcv_1h", [])),
         "news_headline": (news_info or {}).get("headline"),
         "news_sentiment": (news_info or {}).get("sentiment", "neutral"),
         "hour_cdt": now_cdt.hour,
@@ -434,6 +451,14 @@ ANALYSIS PROCESS:
    market is indifferent to your goal. Trade each setup on its own merit.
    CRITICAL trajectory means be MORE selective, not more aggressive — a behind
    account cannot afford marginal trades.
+
+4b. HIGHER-TIMEFRAME CONFIRMATION: each asset includes htf_1h_trend (the 1-hour
+   trend: up/down/sideways). Your 5-minute signal should ALIGN with it. Shorting
+   an asset whose htf_1h_trend is "up", or longing one that is "down", is
+   counter-trend — take it only with exceptional, explicitly-stated evidence and
+   a LOWER probability. When htf_1h_trend is "sideways" or "unknown", rely on the
+   5-minute structure but be more conservative. Trend alignment across timeframes
+   is one of your strongest edges — use it to filter, not just to confirm.
 
 5. Probability must be HONESTLY calibrated — this is your most important rule.
    Your stated probability must match real-world frequency: if you say 0.70,

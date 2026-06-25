@@ -54,6 +54,7 @@ class ScanResult:
     macro_event_imminent: bool = False
     macro_event_name: str = None
     macro_minutes_until: int = None
+    ohlcv_1h: list = field(default_factory=list)  # 1-hour candles for HTF trend
     scan_time: str = None
     error: str = None
 
@@ -141,11 +142,30 @@ async def scan_kraken():
                     current = prices.get(altname)
                     if current is None and ohlcv:
                         current = ohlcv[-1][4]
+                    # Higher-timeframe (1h) candles for trend confirmation.
+                    ohlcv_1h = []
+                    try:
+                        h_res = await client.get(
+                            f"{KRAKEN_BASE}/OHLC",
+                            params={"pair": altname, "interval": 60},
+                        )
+                        h_data = h_res.json().get("result", {})
+                        for k, v in h_data.items():
+                            if k == "last":
+                                continue
+                            ohlcv_1h = [
+                                [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
+                                for c in v[-60:]
+                            ]
+                            break
+                    except Exception as exc:  # noqa: BLE001
+                        log.error("Kraken 1h OHLC failed for %s: %s", altname, exc)
                     results.append(
                         ScanResult(
                             market="crypto",
                             symbol=altname,
                             ohlcv=ohlcv,
+                            ohlcv_1h=ohlcv_1h,
                             current_price=current or 0.0,
                             volume_24h=volumes.get(altname),
                             scan_time=_now_iso(),
