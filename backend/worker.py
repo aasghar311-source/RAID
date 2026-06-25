@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import signal as signal_module
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -26,7 +27,12 @@ import scanner
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
+# Quiet httpx request-level INFO logs — they flood the stream with one line per
+# DB call (hundreds/min). Warnings+errors from httpx still come through.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("raid.worker")
 CDT = ZoneInfo("America/Chicago")
 
