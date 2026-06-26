@@ -570,6 +570,12 @@ RECENT PERFORMANCE (last 5 closed):
 CURRENT OPERATOR SETTINGS:
 {operator_controls_json}
 
+PENDING SIGNAL OUTCOMES (last cycle):
+{signal_outcomes_json}
+Review which of your pending signals FIRED (now open positions) and which EXPIRED
+un-triggered. If many expired, your trigger levels were mis-placed -- adjust this
+cycle. If none fired, consider whether your triggers are too far from current price.
+
 Respond with this exact JSON schema:
 {{
   "cycle_assessment": "one sentence",
@@ -615,6 +621,7 @@ async def _call_claude(
     recent_trades: list,
     scorecard: dict,
     controls: dict,
+    signal_outcomes: str = "",
 ) -> tuple[dict | None, float]:
     """Call Claude with full brain context. Returns (parsed_json, cost_usd)."""
     global _daily_spend
@@ -644,6 +651,7 @@ async def _call_claude(
             "kalshi_enabled": controls.get("kalshi_enabled", False),
             "stocks_enabled": controls.get("stocks_enabled", False),
         }, indent=2),
+        signal_outcomes_json=signal_outcomes,
     )
 
     try:
@@ -1032,6 +1040,10 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         await _update_sizing_state(db, trajectory_status)
         return
 
+    # Get pending signal outcomes for brain feedback.
+    signal_outcomes = await db.get_recent_signal_outcomes()
+    signal_outcomes_str = json.dumps(signal_outcomes, indent=2) if signal_outcomes else "[]"
+
     # Step 3: Claude brain call.
     brain_json, cost_usd = await _call_claude(
         trajectory=trajectory,
@@ -1041,6 +1053,7 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         recent_trades=recent_trades_ctx,
         scorecard=scorecard,
         controls=controls,
+        signal_outcomes=signal_outcomes_str,
     )
     await db.persist_spend_today(get_daily_spend())
 

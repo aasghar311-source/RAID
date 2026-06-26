@@ -564,6 +564,38 @@ async def update_signal_status(signal_id: str, status: str):
         log.error("update_signal_status failed for %s: %s", signal_id, exc)
 
 
+async def expire_armed_signals():
+    """Mark armed signals past their expires_at as expired."""
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        await (
+            supabase.table("pending_signals")
+            .update({"status": "expired"})
+            .eq("status", "armed")
+            .lt("expires_at", now)
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("expire_armed_signals failed: %s", exc)
+
+
+async def get_recent_signal_outcomes(minutes: int = 35):
+    """Return filled and expired signals from the last N minutes for brain feedback."""
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        res = await (
+            supabase.table("pending_signals")
+            .select("symbol, direction, tier, trigger_type, trigger_price, probability, status, reasoning")
+            .in_("status", ["filled", "expired"])
+            .gte("created_at", cutoff)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_recent_signal_outcomes failed: %s", exc)
+        return []
+
+
 async def save_latest_news(news_by_symbol: dict):
     """Upsert latest per-symbol news to latest_news so the terminal can display
     a fresh news feed (one row per symbol, overwritten each cycle)."""
