@@ -99,6 +99,7 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             new_sl = entry * (1 + steps * config.TRAIL_STEP_PCT)
             if current_sl is None or new_sl > current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
+                trade["trail_active"] = True
         elif short_like:
             gain = (entry - current_price) / entry
             if gain < config.TRAIL_TRIGGER_PCT:
@@ -107,6 +108,7 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             new_sl = entry * (1 - steps * config.TRAIL_STEP_PCT)
             if current_sl is None or new_sl < current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
+                trade["trail_active"] = True
     except Exception as exc:  # noqa: BLE001
         log.error("update_trailing_stop failed: %s", exc)
 
@@ -278,11 +280,15 @@ async def monitor_positions(db):
             sl = trade.get("sl")
             tp = trade.get("tp")
 
+            # Re-read SL after trail may have updated it.
+            sl = trade.get("sl")
             hit = _sl_tp_hit(direction, price, sl, tp)
             if hit:
+                # Distinguish trailing_stop from original stop_loss.
+                close_reason = "trailing_stop" if trade.get("trail_active") and hit == "stop_loss" else hit
                 pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
-                await db.close_trade(trade["id"], price, pnl, hit)
-                log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], hit, pnl)
+                await db.close_trade(trade["id"], price, pnl, close_reason)
+                log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], close_reason, pnl)
                 continue
 
             # Max-hold exit: close genuinely stale trades that never hit SL/TP,
