@@ -596,6 +596,16 @@ async def get_recent_signal_outcomes(minutes: int = 35):
         return []
 
 
+async def get_total_realized_pnl():
+    """Sum of pnl across all closed trades = total realized P&L."""
+    try:
+        res = await supabase.table("trades").select("pnl").eq("status", "closed").execute()
+        return sum(float(r.get("pnl") or 0) for r in (res.data or []))
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_total_realized_pnl failed: %s", exc)
+        return 0.0
+
+
 async def save_latest_news(news_by_symbol: dict):
     """Upsert latest per-symbol news to latest_news so the terminal can display
     a fresh news feed (one row per symbol, overwritten each cycle)."""

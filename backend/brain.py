@@ -1125,6 +1125,18 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
     await _update_sizing_state(db, trajectory_status)
 
     _last_brain_cycle_time = datetime.now(timezone.utc).timestamp()
+
+    # Snapshot equity for the terminal chart.
+    try:
+        total_pnl = await db.get_total_realized_pnl()
+        real_equity = config.STARTING_EQUITY + total_pnl
+        await db.supabase.table("equity_snapshots").insert({
+            "equity": round(real_equity, 2),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception as exc:  # noqa: BLE001
+        log.error("equity snapshot failed: %s", exc)
+
     log.info("═══ BRAIN CYCLE END ═══ entries=%d spend_today=$%.4f", entries, _daily_spend)
 
 
