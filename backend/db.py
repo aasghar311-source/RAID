@@ -605,6 +605,23 @@ async def get_status_snapshot() -> dict:
             snap["deployment_cap_pct"] = round(config.MAX_EQUITY_DEPLOYED_PCT * 100, 1)
         except Exception as exc:  # noqa: BLE001
             log.error("deployment snapshot failed: %s", exc)
+        # Entries-by-probability-bucket: how many trades the brain took at each
+        # confidence level (shows impact of the 0.45 MIN_CONFIDENCE floor).
+        try:
+            _pb = await supabase.table("trades").select(
+                "predicted_prob"
+            ).eq("status", "closed").execute()
+            _buckets = {}
+            for _r in (_pb.data or []):
+                _p = _r.get("predicted_prob")
+                if _p is None:
+                    continue
+                _k = round(float(_p), 1)
+                _buckets[str(_k)] = _buckets.get(str(_k), 0) + 1
+            snap["entries_by_prob"] = dict(sorted(_buckets.items()))
+        except Exception as exc:  # noqa: BLE001
+            log.error("entries_by_prob failed: %s", exc)
+            snap["entries_by_prob"] = {}
         snap["api_spend_today"] = await get_spend_today()
 
         # Calibration readout: for closed trades, bucket by stated probability
