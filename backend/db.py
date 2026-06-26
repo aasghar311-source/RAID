@@ -37,6 +37,7 @@ _EXPECTED_TABLES = (
     "predictions",
     "sizing_state",
     "goal_tracker",
+    "pending_signals",
 )
 
 
