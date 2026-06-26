@@ -533,11 +533,20 @@ ANALYSIS PROCESS:
 
    RULES FOR ALL PENDING SIGNALS:
    - Same honest conviction bar as trades — do NOT lower standards for pending entries
-   - Triggers set DELIBERATELY AWAY from current price (pullback or breakout)
    - ONE direction per asset per cycle (no long+short brackets on same symbol)
    - Up to ~7 total: ~2 conviction ladders + ~5 watchlist breakouts
-   - Many pending orders WON'T fire between cycles — that is correct behavior
    - If no honest pending setups exist, output an empty array — never pad
+   TRIGGER DISTANCE (critical — signals expire in 30 minutes):
+   - Crypto moves ~0.1-0.4% in a typical 30-minute window
+   - CONVICTION LIMITS (pullbacks): set 0.1-0.3% from current price, not further.
+     A long limit at 0.15% below current = realistic pullback. 0.8% below = never fills.
+   - WATCHLIST STOPS (breakouts): set just beyond the key level, within 0.2-0.5%
+     of current price. The breakout trigger should be CLOSE to where price is
+     consolidating, not at a distant level it would take hours to reach.
+   - If a setup requires a trigger >0.5% away, it is unlikely to fill in 30 min —
+     either move the trigger closer or skip that signal.
+   - A signal that never triggers is wasted. Better to set a tight, reachable
+     trigger that actually fills than a "perfect" level that expires every cycle.
 
 OUTPUT FORMAT (strict):
 Respond with ONE valid JSON object and nothing else — no prose, no markdown fences.
