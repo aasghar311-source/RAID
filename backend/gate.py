@@ -58,9 +58,6 @@ async def check_gate(signal: Signal, db):
                 return GateResult(False, "max_equity_deployed")
         except Exception as exc:  # noqa: BLE001
             log.error("gate deployment-cap check failed: %s", exc)
-        for t in open_trades:
-            if t.get("symbol") == signal.symbol and t.get("direction") == signal.direction:
-                return GateResult(False, f"duplicate_{signal.symbol}_{signal.direction}")
     except Exception as exc:  # noqa: BLE001
         log.error("gate max-open check failed: %s", exc)
 
