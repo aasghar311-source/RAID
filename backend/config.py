@@ -65,6 +65,9 @@ STOCKS_ENABLED     = False
 OPTIONS_ENABLED    = False
 COMMODITIES_ENABLED = False
 
+PENDING_SIGNALS_ENABLED = False
+PENDING_SIGNAL_EXPIRY_MIN = 30
+
 # --- Scan / exit cadence --------------------------------------------------
 LOOP_SLEEP_SECONDS    = 1     # exit monitor always runs at 1-second resolution
 CONSECUTIVE_LOSS_LOOKBACK = 50

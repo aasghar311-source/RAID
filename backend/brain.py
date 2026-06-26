@@ -511,6 +511,34 @@ ANALYSIS PROCESS:
    honestly justify a probability at or above the entry floor, SKIP the trade.
    An honest 0.55 that you skip is worth more than an inflated 0.72 that loses.
 
+6. PENDING SIGNAL GENERATION (always produce alongside immediate trades):
+   In ADDITION to your "trades" array, output a "pending_signals" array with
+   conditional orders that fire between brain cycles when price hits triggers.
+
+   TIER 1 — CONVICTION LADDERS (~2 per cycle):
+   You have a genuine high-conviction call NOW. Set ~2 laddered pending entries
+   at different trigger prices to scale in at better levels.
+   - Trigger type: "limit" or "stop" (your choice based on the setup)
+   - Probability: your REAL conviction right now (same honest bar as trades)
+   - SPLIT SIZING: divide the normal position size across the ladder entries.
+     2 orders = half-size each (size_pct is already the SPLIT amount per order).
+     Both orders share a ladder_group string (e.g. "BTC-lad-1").
+   - Trigger price MUST be away from current price (wait for pullback/breakout)
+
+   TIER 2 — WATCHLIST BREAKOUT TRIGGERS (~5 per cycle):
+   Asset is NOT tradeable now but BECOMES a trade if it breaks a key level.
+   - Trigger type: ALWAYS "stop" (price must break PAST the level, confirming move)
+   - Probability: FORWARD-LOOKING — "if it breaks $X, this becomes a 0.68 trade"
+   - These are conditional setups: "not trading now, but if the level breaks, I'm in"
+
+   RULES FOR ALL PENDING SIGNALS:
+   - Same honest conviction bar as trades — do NOT lower standards for pending entries
+   - Triggers set DELIBERATELY AWAY from current price (pullback or breakout)
+   - ONE direction per asset per cycle (no long+short brackets on same symbol)
+   - Up to ~7 total: ~2 conviction ladders + ~5 watchlist breakouts
+   - Many pending orders WON'T fire between cycles — that is correct behavior
+   - If no honest pending setups exist, output an empty array — never pad
+
 OUTPUT FORMAT (strict):
 Respond with ONE valid JSON object and nothing else — no prose, no markdown fences.
 Use DOUBLE QUOTES (") for every key and every string value. Do NOT use single
@@ -557,6 +585,21 @@ Respond with this exact JSON schema:
       "size_pct": 2.5,
       "probability": 0.71,
       "reasoning": "Two sentences max."
+    }}
+  ],
+  "pending_signals": [
+    {{
+      "symbol": "BTCUSD",
+      "direction": "long",
+      "tier": "conviction",
+      "trigger_type": "limit",
+      "trigger_price": 62500.00,
+      "stop_loss": 61800.00,
+      "take_profit": 64200.00,
+      "size_pct": 1.25,
+      "probability": 0.72,
+      "ladder_group": "BTC-lad-1",
+      "reasoning": "Pullback to EMA20 support"
     }}
   ],
   "skipped": {{"SYMBOL": "reason"}},

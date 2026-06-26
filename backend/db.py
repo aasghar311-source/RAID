@@ -1,7 +1,7 @@
 """RAID database layer — single async Supabase client + CRUD and schema verification."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from supabase import acreate_client, AsyncClient
 
@@ -485,6 +485,69 @@ async def get_sizing_state():
         "optimal_f": None,
         "trajectory": "ON_TRACK",
     }
+
+
+# ── PENDING SIGNALS ──────────────────────────────────────────────────────────
+
+async def save_pending_signals(signals: list):
+    """Insert pending signal rows, marked armed with expiry from config."""
+    try:
+        now = datetime.now(timezone.utc)
+        expiry = now + timedelta(minutes=config.PENDING_SIGNAL_EXPIRY_MIN)
+        rows = []
+        for s in (signals or []):
+            rows.append({
+                "symbol": s.get("symbol"),
+                "direction": s.get("direction"),
+                "tier": s.get("tier", "conviction"),
+                "trigger_type": s.get("trigger_type", "limit"),
+                "trigger_price": s.get("trigger_price"),
+                "stop_loss": s.get("stop_loss"),
+                "take_profit": s.get("take_profit"),
+                "size_pct": s.get("size_pct"),
+                "probability": s.get("probability"),
+                "ladder_group": s.get("ladder_group"),
+                "reasoning": s.get("reasoning"),
+                "regime": s.get("regime"),
+                "status": "armed",
+                "created_at": now.isoformat(),
+                "expires_at": expiry.isoformat(),
+            })
+        if rows:
+            await supabase.table("pending_signals").insert(rows).execute()
+            log.info("PENDING: saved %d armed signals (expire %s)", len(rows), expiry.isoformat())
+    except Exception as exc:  # noqa: BLE001
+        log.error("save_pending_signals failed: %s", exc)
+
+
+async def cancel_armed_signals():
+    """Cancel all currently armed signals (called at start of each brain cycle)."""
+    try:
+        await (
+            supabase.table("pending_signals")
+            .update({"status": "cancelled"})
+            .eq("status", "armed")
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("cancel_armed_signals failed: %s", exc)
+
+
+async def get_armed_signals():
+    """Return all armed pending signals that have not yet expired."""
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        res = await (
+            supabase.table("pending_signals")
+            .select("*")
+            .eq("status", "armed")
+            .gte("expires_at", now)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_armed_signals failed: %s", exc)
+        return []
 
 
 async def save_latest_news(news_by_symbol: dict):
