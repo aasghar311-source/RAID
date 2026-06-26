@@ -308,6 +308,8 @@ def _build_asset_context(scan_result, news_info: dict) -> dict:
         "swing_lows": swing_lows,
         "vol_30d": round(vol, 4),
         "htf_1h_trend": _htf_trend_label(getattr(scan_result, "ohlcv_1h", [])),
+        "tf_30m_trend": _htf_trend_label(getattr(scan_result, "ohlcv_30m", [])),
+        "tf_15m_trend": _htf_trend_label(getattr(scan_result, "ohlcv_15m", [])),
         "news_headline": (news_info or {}).get("headline"),
         "news_sentiment": (news_info or {}).get("sentiment", "neutral"),
         "hour_cdt": now_cdt.hour,
@@ -483,13 +485,18 @@ ANALYSIS PROCESS:
    CRITICAL trajectory means be MORE selective, not more aggressive — a behind
    account cannot afford marginal trades.
 
-4b. HIGHER-TIMEFRAME CONFIRMATION: each asset includes htf_1h_trend (the 1-hour
-   trend: up/down/sideways). Your 5-minute signal should ALIGN with it. Shorting
-   an asset whose htf_1h_trend is "up", or longing one that is "down", is
-   counter-trend — take it only with exceptional, explicitly-stated evidence and
-   a LOWER probability. When htf_1h_trend is "sideways" or "unknown", rely on the
-   5-minute structure but be more conservative. Trend alignment across timeframes
-   is one of your strongest edges — use it to filter, not just to confirm.
+4b. MULTI-TIMEFRAME CONFIRMATION: each asset now includes three trend labels:
+   tf_15m_trend, tf_30m_trend, htf_1h_trend (up/down/sideways/unknown each).
+   Your 5-minute signal should ALIGN with ALL THREE where possible.
+   Confluence scoring:
+   - All three align with your direction → strong confirmation, standard prob
+   - Two of three align → acceptable, note the dissenter in reasoning
+   - Only one or zero align → counter-trend; take ONLY with exceptional evidence
+     and explicitly lower probability (subtract 0.05–0.10 from your base read)
+   Shorting when htf_1h_trend is "up" or longing when it is "down" requires
+   explicit justification. When any trend is "sideways" or "unknown", be more
+   conservative. Multi-timeframe alignment is your strongest structural edge —
+   use it to filter marginal setups, not just to confirm good ones.
 
 5. Probability must be HONESTLY calibrated — this is your most important rule.
    Your stated probability must match real-world frequency: if you say 0.70,

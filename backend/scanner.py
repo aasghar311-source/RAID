@@ -55,6 +55,8 @@ class ScanResult:
     macro_event_name: str = None
     macro_minutes_until: int = None
     ohlcv_1h: list = field(default_factory=list)  # 1-hour candles for HTF trend
+    ohlcv_15m: list = field(default_factory=list)  # 15-minute candles for MTF trend
+    ohlcv_30m: list = field(default_factory=list)  # 30-minute candles for MTF trend
     scan_time: str = None
     error: str = None
 
@@ -160,12 +162,50 @@ async def scan_kraken():
                             break
                     except Exception as exc:  # noqa: BLE001
                         log.error("Kraken 1h OHLC failed for %s: %s", altname, exc)
+                    # Mid-timeframe (15m) candles for trend confirmation.
+                    ohlcv_15m = []
+                    try:
+                        m15_res = await client.get(
+                            f"{KRAKEN_BASE}/OHLC",
+                            params={"pair": altname, "interval": 15},
+                        )
+                        m15_data = m15_res.json().get("result", {})
+                        for k, v in m15_data.items():
+                            if k == "last":
+                                continue
+                            ohlcv_15m = [
+                                [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
+                                for c in v[-60:]
+                            ]
+                            break
+                    except Exception as exc:  # noqa: BLE001
+                        log.error("Kraken 15m OHLC failed for %s: %s", altname, exc)
+                    # Mid-timeframe (30m) candles for trend confirmation.
+                    ohlcv_30m = []
+                    try:
+                        m30_res = await client.get(
+                            f"{KRAKEN_BASE}/OHLC",
+                            params={"pair": altname, "interval": 30},
+                        )
+                        m30_data = m30_res.json().get("result", {})
+                        for k, v in m30_data.items():
+                            if k == "last":
+                                continue
+                            ohlcv_30m = [
+                                [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
+                                for c in v[-60:]
+                            ]
+                            break
+                    except Exception as exc:  # noqa: BLE001
+                        log.error("Kraken 30m OHLC failed for %s: %s", altname, exc)
                     results.append(
                         ScanResult(
                             market="crypto",
                             symbol=altname,
                             ohlcv=ohlcv,
                             ohlcv_1h=ohlcv_1h,
+                            ohlcv_15m=ohlcv_15m,
+                            ohlcv_30m=ohlcv_30m,
                             current_price=current or 0.0,
                             volume_24h=volumes.get(altname),
                             scan_time=_now_iso(),
