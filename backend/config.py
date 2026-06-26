@@ -29,8 +29,8 @@ BOT_LIVE_DATE          = "2026-07-20"      # backward compat alias
 
 # --- Brain / cycle --------------------------------------------------------
 BRAIN_CYCLE_MINUTES    = 30
-MAX_OPEN_TRADES        = 40
-MAX_ENTRIES_PER_CYCLE  = 20
+MAX_OPEN_TRADES        = 60
+MAX_ENTRIES_PER_CYCLE  = 30
 CLAUDE_DAILY_BUDGET_USD = 7.0
 CLAUDE_MODEL           = "claude-sonnet-4-6"
 
@@ -38,8 +38,8 @@ CLAUDE_MODEL           = "claude-sonnet-4-6"
 KELLY_FRACTION_DEFAULT        = 0.40
 TARGET_VOLATILITY             = 0.15        # vol scalar denominator
 MIN_TRADE_SIZE_PCT            = 0.025       # 2.5% equity floor (Path B)
-MAX_TRADE_SIZE_PCT            = 0.075       # 7.5% equity cap (Path B, ~$300)
-MAX_TRADE_SIZE_PCT_BEHIND     = 0.075       # 7.5% equity cap (Path B)
+MAX_TRADE_SIZE_PCT            = 0.05        # 5% equity cap (~$200 now, auto-grows w/ equity)
+MAX_TRADE_SIZE_PCT_BEHIND     = 0.05        # 5% equity cap (~$200 now, auto-grows w/ equity)
 HIGH_CONVICTION_THRESHOLD     = 0.72        # prob floor for size boost when BEHIND
 CRITICAL_CONVICTION_THRESHOLD = 0.78        # prob floor for size boost when CRITICAL
 
@@ -147,7 +147,7 @@ HEALTH_CHECK_PORT = 8080
 # --- Legacy constants (kept so executor.py / gate.py import without error) --
 BASE_TRADE_SIZE    = 100.0
 RISK_REWARD_RATIO  = 2.0
-MIN_CONFIDENCE     = 0.50
+MIN_CONFIDENCE     = 0.45
 MAX_EQUITY_DEPLOYED_PCT = 0.70   # Path B: never deploy >70% of equity in open positions
 EXCLUDED_SYMBOLS = ["GBPUSD", "EURUSD", "PAXGUSD", "XAUTUSD", "XAUUSD", "GBP", "EUR"]  # non-crypto, exclude from universe
 CLAUDE_GRAY_ZONE_MIN    = 0.70
@@ -157,7 +157,7 @@ CLAUDE_BUDGET_DAILY     = CLAUDE_DAILY_BUDGET_USD   # alias
 BUDGET_TECH_THRESHOLD   = 75.0
 CLAUDE_MAX_TOKENS       = 100
 KILL_SWITCH_ACTIVE      = False
-MAX_ENTRIES_PER_CYCLE   = 20
+MAX_ENTRIES_PER_CYCLE   = 30
 PULLBACK_BAND_PCT       = 0.01
 PULLBACK_LOOKBACK       = 12
 PULLBACK_MIN_BOUNCE     = 0.005
