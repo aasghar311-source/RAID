@@ -218,12 +218,6 @@ async def _run_brain_cycle(db_, controls: dict):
     """Scan → news enrichment → brain. Crypto only in Phase 1."""
     log.info("── Brain cycle start ──")
     try:
-        # Cancel all armed pending signals before generating fresh ones.
-        effective_pending = controls.get(
-            "pending_signals_enabled", config.PENDING_SIGNALS_ENABLED
-        )
-        if effective_pending:
-            await db_.cancel_armed_signals()
 
         if not controls.get("crypto_enabled", True):
             log.info("WORKER: crypto disabled by operator_controls — skipping")
