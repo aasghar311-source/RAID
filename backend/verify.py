@@ -122,6 +122,7 @@ async def run_verification():
                 market_context=market_ctx,
                 open_positions=brain._build_open_positions_context(open_trades),
                 recent_trades=brain._build_recent_trades_context(recent_trades),
+                scorecard=brain._build_scorecard(await db.get_closed_trades_last_n(30)),
                 controls=controls,
             )
 
