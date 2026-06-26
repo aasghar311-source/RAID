@@ -22,7 +22,9 @@ import brain
 import config
 import db
 import executor
+import gate
 import scanner
+from signals import Signal
 
 logging.basicConfig(
     level=logging.INFO,
@@ -355,6 +357,178 @@ async def _periodic_loop(db_):
         await asyncio.sleep(15)
 
 
+# ── Pending-signal monitor (5s cadence) ───────────────────────────────────
+
+async def _signal_monitor_loop(db_):
+    """Check armed pending signals against live prices every ~5s.
+    Only active when pending_signals_enabled is ON in operator_controls."""
+    while not _shutdown.is_set():
+        try:
+            controls = await db_.get_operator_controls()
+            effective_pending = controls.get(
+                "pending_signals_enabled", config.PENDING_SIGNALS_ENABLED
+            )
+            if not effective_pending:
+                await asyncio.sleep(5)
+                continue
+
+            # Honor kill/pause -- these block ALL entries, including pending fills.
+            if controls.get("kill_switch") or controls.get("pause_entries"):
+                await asyncio.sleep(5)
+                continue
+
+            armed = await db_.get_armed_signals()
+            if not armed:
+                await asyncio.sleep(5)
+                continue
+
+            # Batch-fetch live prices for all armed symbols.
+            symbols = list({s["symbol"] for s in armed if s.get("symbol")})
+            prices = await scanner.fetch_kraken_prices(symbols) if symbols else {}
+
+            for sig in armed:
+                symbol = sig.get("symbol")
+                direction = sig.get("direction")
+                trigger_type = sig.get("trigger_type")
+                trigger_price = float(sig.get("trigger_price") or 0)
+                stop_loss = float(sig.get("stop_loss") or 0)
+                take_profit = float(sig.get("take_profit") or 0)
+                size_pct = float(sig.get("size_pct") or 0)
+                probability = float(sig.get("probability") or 0)
+
+                live_price = prices.get(symbol)
+                if live_price is None or live_price <= 0:
+                    continue
+
+                # --- Trigger check ---
+                triggered = False
+                long_like = direction in ("long", "yes")
+
+                if trigger_type == "limit":
+                    # Limit: price returned TO trigger (buy low / sell high).
+                    if long_like and live_price <= trigger_price:
+                        triggered = True
+                    elif not long_like and live_price >= trigger_price:
+                        triggered = True
+                elif trigger_type == "stop":
+                    # Stop: price broke PAST trigger in trade direction.
+                    if long_like and live_price >= trigger_price:
+                        triggered = True
+                    elif not long_like and live_price <= trigger_price:
+                        triggered = True
+
+                if not triggered:
+                    continue
+
+                # --- Sanity re-check: SL on correct side of live price ---
+                if stop_loss > 0:
+                    if long_like and live_price <= stop_loss:
+                        log.info(
+                            "PENDING: skip %s -- live %.6f already <= SL %.6f",
+                            symbol, live_price, stop_loss,
+                        )
+                        continue
+                    if not long_like and live_price >= stop_loss:
+                        log.info(
+                            "PENDING: skip %s -- live %.6f already >= SL %.6f",
+                            symbol, live_price, stop_loss,
+                        )
+                        continue
+
+                # --- Gate check (same path as immediate entries) ---
+                signal_obj = Signal(
+                    market="crypto",
+                    symbol=symbol,
+                    direction=direction,
+                    confidence=probability,
+                    technical_score=probability * 100,
+                    news_sentiment="neutral",
+                    news_headline="",
+                    news_boost=0.0,
+                    macro_blocked=False,
+                    block_reason="",
+                    scan_result=scanner.ScanResult(
+                        market="crypto", symbol=symbol,
+                        current_price=live_price, scan_time="",
+                    ),
+                )
+                gate_result = await gate.check_gate(signal_obj, db_)
+                if not gate_result.passed:
+                    log.info("PENDING: gate reject %s -- %s", symbol, gate_result.reason)
+                    continue
+
+                # --- Compute size and open the trade ---
+                equity = await db_.get_equity()
+                sizing_state = await db_.get_sizing_state()
+                kelly_fraction = float(
+                    sizing_state.get("kelly_fraction") or config.KELLY_FRACTION_DEFAULT
+                )
+                # Clamp to config bounds.
+                max_pct = config.MAX_TRADE_SIZE_PCT
+                if size_pct / 100.0 > max_pct:
+                    size_pct = max_pct * 100.0
+                if size_pct / 100.0 < config.MIN_TRADE_SIZE_PCT:
+                    size_pct = config.MIN_TRADE_SIZE_PCT * 100.0
+                size_usd = (size_pct / 100.0) * equity
+
+                trade_record = {
+                    "bot_name": config.BOT_NAME,
+                    "market": "crypto",
+                    "symbol": symbol,
+                    "direction": direction,
+                    "entry_price": live_price,
+                    "exit_price": None,
+                    "size_usd": round(size_usd, 2),
+                    "confidence": probability,
+                    "pnl": 0,
+                    "status": "open",
+                    "close_reason": None,
+                    "paper_mode": config.PAPER_MODE,
+                    "sl": stop_loss,
+                    "tp": take_profit,
+                    "instrument_type": "crypto",
+                    "market_regime": sig.get("regime") or "UNKNOWN",
+                    "claude_reasoning": (sig.get("reasoning") or "")[:1000],
+                    "predicted_prob": probability,
+                    "kelly_fraction": kelly_fraction,
+                    "trajectory_status": brain.get_trajectory_status(),
+                }
+
+                trade_id = await db_.log_trade(trade_record)
+                if not trade_id:
+                    log.error("PENDING: db.log_trade failed for %s", symbol)
+                    continue
+
+                # Log prediction for calibration tracking.
+                await db_.log_prediction({
+                    "trade_id": trade_id,
+                    "symbol": symbol,
+                    "direction": direction,
+                    "stated_prob": probability,
+                    "outcome": None,
+                    "actual_win": None,
+                })
+
+                # Large trade alert.
+                if size_usd > equity * 0.04:
+                    await alert_manager.alert_large_trade(symbol, size_usd, equity)
+
+                # Mark signal as filled.
+                await db_.update_signal_status(sig["id"], "filled")
+
+                log.info(
+                    "PENDING FILL %s %s size=$%.2f entry=%.5f sl=%.5f tp=%.5f "
+                    "prob=%.2f tier=%s (%s)",
+                    symbol, direction, size_usd, live_price, stop_loss, take_profit,
+                    probability, sig.get("tier"),
+                    "PAPER" if config.PAPER_MODE else "LIVE",
+                )
+
+        except Exception as exc:  # noqa: BLE001
+            log.error("signal monitor loop error: %s", exc)
+        await asyncio.sleep(5)
+
+
 # ── Health endpoint ───────────────────────────────────────────────────────
 
 def _health_payload():
@@ -452,6 +626,7 @@ async def main():
         asyncio.create_task(_exit_monitor_loop(db), name="exit_monitor"),
         asyncio.create_task(_brain_loop(db), name="brain"),
         asyncio.create_task(_periodic_loop(db), name="periodic"),
+        asyncio.create_task(_signal_monitor_loop(db), name="signal_monitor"),
     ]
 
     try:

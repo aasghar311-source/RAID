@@ -1075,16 +1075,29 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         except Exception as exc:  # noqa: BLE001
             log.error("regime_log for %s failed: %s", sym, exc)
 
-    # Step 4: Parse and execute trades.
-    entries = await _execute_brain_trades(
-        brain_json=brain_json,
-        scan_results=scan_results,
-        trajectory=trajectory,
-        sizing_state=sizing_state,
-        db=db,
-        controls=controls,
-        cost_usd=cost_usd,
+    # Step 4: Parse and execute trades (or save pending signals).
+    effective_pending = controls.get(
+        "pending_signals_enabled", config.PENDING_SIGNALS_ENABLED
     )
+    if effective_pending:
+        # Pending mode: save signals to DB; monitor fires them on triggers.
+        pending = brain_json.get("pending_signals") or []
+        regime_by_asset = brain_json.get("regime_by_asset") or {}
+        for sig in pending:
+            sig["regime"] = regime_by_asset.get(sig.get("symbol"), "UNKNOWN")
+        await db.save_pending_signals(pending)
+        entries = 0
+        log.info("BRAIN: pending mode ON -- saved %d signals, skipped immediate", len(pending))
+    else:
+        entries = await _execute_brain_trades(
+            brain_json=brain_json,
+            scan_results=scan_results,
+            trajectory=trajectory,
+            sizing_state=sizing_state,
+            db=db,
+            controls=controls,
+            cost_usd=cost_usd,
+        )
 
     # Step 5: Update sizing state.
     await _update_sizing_state(db, trajectory_status)

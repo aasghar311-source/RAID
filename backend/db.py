@@ -551,6 +551,19 @@ async def get_armed_signals():
         return []
 
 
+async def update_signal_status(signal_id: str, status: str):
+    """Update a pending signal's status (filled/expired/cancelled)."""
+    try:
+        await (
+            supabase.table("pending_signals")
+            .update({"status": status})
+            .eq("id", signal_id)
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("update_signal_status failed for %s: %s", signal_id, exc)
+
+
 async def save_latest_news(news_by_symbol: dict):
     """Upsert latest per-symbol news to latest_news so the terminal can display
     a fresh news feed (one row per symbol, overwritten each cycle)."""
