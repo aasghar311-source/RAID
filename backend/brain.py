@@ -548,6 +548,26 @@ ANALYSIS PROCESS:
    - A signal that never triggers is wasted. Better to set a tight, reachable
      trigger that actually fills than a "perfect" level that expires every cycle.
 
+7. STOP LOSS AND TAKE PROFIT PLACEMENT (use structure, not fixed percentages):
+   Each asset includes swing_highs, swing_lows, and EMA levels from recent action.
+   Place stop_loss at the STRUCTURAL level that invalidates your trade thesis:
+   - LONGS: SL just below the nearest swing low or support level. If price
+     breaks that low, your long thesis is wrong. Example: entry $1.80, nearest
+     swing low at $1.775 — set SL at $1.772 (just below the level).
+   - SHORTS: SL just above the nearest swing high or resistance level. If price
+     breaks that high, your short thesis is wrong.
+   - DO NOT use a fixed percentage from entry (like always 2% below). Markets
+     move based on structure, not your entry price. A trade near tight structure
+     gets a tight SL (0.8%). A trade with wide structure gets a wide SL (3%).
+   - If no clear swing level exists, use the nearest EMA (ema50 or ema200).
+   - Maximum SL distance: 4% from entry. Beyond that, skip the trade.
+   Place take_profit at the next structural target:
+   - LONGS: TP at the next swing high or resistance above entry
+   - SHORTS: TP at the next swing low or support below entry
+   - TP must be at least 1.5x the SL distance (minimum 1.5:1 reward-to-risk)
+   - If you cannot find a TP that gives 1.5:1 R:R, skip the trade
+   This applies to BOTH immediate trades AND pending signals.
+
 OUTPUT FORMAT (strict):
 Respond with ONE valid JSON object and nothing else — no prose, no markdown fences.
 Use DOUBLE QUOTES (") for every key and every string value. Do NOT use single
