@@ -150,7 +150,7 @@ HEALTH_CHECK_PORT = 8080
 # --- Legacy constants (kept so executor.py / gate.py import without error) --
 BASE_TRADE_SIZE    = 100.0
 RISK_REWARD_RATIO  = 2.0
-MIN_CONFIDENCE     = 0.45
+MIN_CONFIDENCE     = 0.60
 MAX_EQUITY_DEPLOYED_PCT = 0.70   # Path B: never deploy >70% of equity in open positions
 EXCLUDED_SYMBOLS = ["GBPUSD", "EURUSD", "PAXGUSD", "XAUTUSD", "XAUUSD", "GBP", "EUR"]  # non-crypto, exclude from universe
 CLAUDE_GRAY_ZONE_MIN    = 0.70
