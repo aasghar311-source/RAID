@@ -955,6 +955,12 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
     # Step 2: Market context.
     market_context = _build_market_context(scan_results, news_by_symbol or {})
 
+    # Persist latest news so the terminal can display a fresh news feed.
+    try:
+        await db.save_latest_news(news_by_symbol or {})
+    except Exception as exc:  # noqa: BLE001
+        log.error("save_latest_news call failed: %s", exc)
+
     # Pull supporting data.
     open_trades = await db.get_open_trades()
     recent_trades = await db.get_closed_trades_last_n(5)

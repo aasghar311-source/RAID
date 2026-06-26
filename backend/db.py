@@ -487,6 +487,26 @@ async def get_sizing_state():
     }
 
 
+async def save_latest_news(news_by_symbol: dict):
+    """Upsert latest per-symbol news to latest_news so the terminal can display
+    a fresh news feed (one row per symbol, overwritten each cycle)."""
+    try:
+        rows = []
+        for sym, info in (news_by_symbol or {}).items():
+            if not info or not info.get("headline"):
+                continue
+            rows.append({
+                "symbol": sym,
+                "headline": info.get("headline"),
+                "sentiment": info.get("sentiment", "neutral"),
+                "published_at": info.get("published_at"),
+            })
+        if rows:
+            await supabase.table("latest_news").upsert(rows, on_conflict="symbol").execute()
+    except Exception as exc:  # noqa: BLE001
+        log.error("save_latest_news failed: %s", exc)
+
+
 async def update_sizing_state(updates: dict):
     """Update the sizing_state row (upsert via the single existing row)."""
     try:
