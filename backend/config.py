@@ -91,7 +91,7 @@ MAX_HOLD_EXIT_ENABLED = True # set False to disable stale-trade exits
 # Evidence: losing trades peaked at ~0.45-0.59% avg; winners showed green early. A trade still
 # under NO_PROGRESS_MIN_PEAK_PCT after NO_PROGRESS_MINUTES is behaving like the losing population.
 NO_PROGRESS_EXIT_ENABLED = True   # set False to disable
-NO_PROGRESS_MINUTES      = 90     # how long to give a trade to show real green
+NO_PROGRESS_MINUTES      = 45     # how long to give a trade to show real green
 NO_PROGRESS_MIN_PEAK_PCT = 0.5    # if peak_pnl_pct never reached this %, it's a dud
 
 # --- EOD close (Phase 2 stocks/options) -----------------------------------
