@@ -369,6 +369,7 @@ async def _periodic_loop(db_):
 async def _signal_monitor_loop(db_):
     """Check armed pending signals against live prices every ~5s.
     Only active when pending_signals_enabled is ON in operator_controls."""
+    _rejected = set()
     while not _shutdown.is_set():
         try:
             controls = await db_.get_operator_controls()
@@ -395,7 +396,13 @@ async def _signal_monitor_loop(db_):
             symbols = list({s["symbol"] for s in armed if s.get("symbol")})
             prices = await scanner.fetch_kraken_prices(symbols) if symbols else {}
 
+            # Clear rejection cache for signals no longer armed (new cycle)
+            armed_ids = {s["id"] for s in armed}
+            _rejected &= armed_ids
+
             for sig in armed:
+                if sig["id"] in _rejected:
+                    continue
                 symbol = sig.get("symbol")
                 direction = sig.get("direction")
                 trigger_type = sig.get("trigger_type")
@@ -464,6 +471,7 @@ async def _signal_monitor_loop(db_):
                 gate_result = await gate.check_gate(signal_obj, db_)
                 if not gate_result.passed:
                     log.info("PENDING: gate reject %s -- %s", symbol, gate_result.reason)
+                    _rejected.add(sig["id"])
                     continue
 
                 # --- Compute size and open the trade ---
