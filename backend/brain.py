@@ -353,6 +353,37 @@ def _build_recent_trades_context(recent_trades: list) -> list:
     ]
 
 
+def _build_scorecard(trades: list) -> dict:
+    """Compute the brain's OWN recent track record so it can self-correct.
+    Breaks win rate down by direction, regime, and confidence bucket — lets
+    the brain see e.g. 'my longs win 26%' or 'my 0.70 calls actually win 47%'
+    and adjust THIS cycle accordingly. Reflection, not learning."""
+    def _wr(rows):
+        n = len(rows)
+        if n == 0:
+            return None
+        w = sum(1 for r in rows if (r.get("pnl") or 0) > 0)
+        return {"n": n, "win_pct": round(100.0 * w / n, 0),
+                "avg_pnl": round(sum(float(r.get("pnl") or 0) for r in rows) / n, 2)}
+    closed = [t for t in (trades or []) if t.get("pnl") is not None]
+    by_dir, by_regime, by_conf = {}, {}, {}
+    for t in closed:
+        d = t.get("direction") or "?"
+        by_dir.setdefault(d, []).append(t)
+        rg = t.get("market_regime") or "?"
+        by_regime.setdefault(rg, []).append(t)
+        p = t.get("predicted_prob")
+        if p is not None:
+            b = str(round(float(p), 1))
+            by_conf.setdefault(b, []).append(t)
+    return {
+        "overall": _wr(closed),
+        "by_direction": {k: _wr(v) for k, v in by_dir.items()},
+        "by_regime": {k: _wr(v) for k, v in by_regime.items()},
+        "by_confidence": {k: _wr(v) for k, v in by_conf.items()},
+    }
+
+
 # ── STEP 3: CLAUDE BRAIN CALL ─────────────────────────────────────────────
 
 _SYSTEM_PROMPT = """You are the trading brain for RAID.
@@ -491,6 +522,13 @@ MARKET DATA:
 OPEN POSITIONS:
 {open_positions_json}
 
+YOUR OWN TRACK RECORD (last 30 closed — review this and CORRECT your mistakes):
+{scorecard_json}
+Use this to self-correct THIS cycle. If your longs lose, be far more skeptical of
+longs. If your stated 0.70 calls win much less than 70%, you are overconfident —
+lower your probabilities. If you lose in a regime, avoid it. Your past results are
+your most honest feedback. Do not repeat patterns that lose.
+
 RECENT PERFORMANCE (last 5 closed):
 {recent_trades_json}
 
@@ -525,6 +563,7 @@ async def _call_claude(
     market_context: dict,
     open_positions: list,
     recent_trades: list,
+    scorecard: dict,
     controls: dict,
 ) -> tuple[dict | None, float]:
     """Call Claude with full brain context. Returns (parsed_json, cost_usd)."""
@@ -547,6 +586,7 @@ async def _call_claude(
         market_context_json=json.dumps(market_context, indent=2),
         open_positions_json=json.dumps(open_positions, indent=2),
         recent_trades_json=json.dumps(recent_trades, indent=2),
+        scorecard_json=json.dumps(scorecard, indent=2),
         operator_controls_json=json.dumps({
             "max_open_trades": controls.get("max_open_trades", config.MAX_OPEN_TRADES),
             "max_position_pct": controls.get("max_position_pct", config.MAX_TRADE_SIZE_PCT),
@@ -918,10 +958,12 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
     # Pull supporting data.
     open_trades = await db.get_open_trades()
     recent_trades = await db.get_closed_trades_last_n(5)
+    scorecard_trades = await db.get_closed_trades_last_n(30)
     sizing_state = await db.get_sizing_state()
 
     open_positions_ctx = _build_open_positions_context(open_trades)
     recent_trades_ctx = _build_recent_trades_context(recent_trades)
+    scorecard = _build_scorecard(scorecard_trades)
 
     # Budget pre-check: a budget-capped cycle is HEALTHY, not a missed/crashed
     # cycle. Short-circuit here so the 'no Claude response' path below only ever
@@ -941,6 +983,7 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         market_context=market_context,
         open_positions=open_positions_ctx,
         recent_trades=recent_trades_ctx,
+        scorecard=scorecard,
         controls=controls,
     )
     await db.persist_spend_today(get_daily_spend())
