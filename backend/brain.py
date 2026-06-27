@@ -524,7 +524,7 @@ ANALYSIS PROCESS:
    conditional orders that fire between brain cycles when price hits triggers.
 
    TIER 1 — CONVICTION LADDERS (~2 per cycle):
-   You have a genuine high-conviction call NOW. Set ~2 laddered pending entries
+   You have a genuine high-conviction call NOW. Set up to 6 laddered pending entries
    at different trigger prices to scale in at better levels.
    - Trigger type: "limit" or "stop" (your choice based on the setup)
    - Probability: your REAL conviction right now (same honest bar as trades)
@@ -538,11 +538,12 @@ ANALYSIS PROCESS:
    - Trigger type: ALWAYS "stop" (price must break PAST the level, confirming move)
    - Probability: FORWARD-LOOKING — "if it breaks $X, this becomes a 0.68 trade"
    - These are conditional setups: "not trading now, but if the level breaks, I'm in"
+   - Generate up to 10 watchlist breakout signals per cycle
 
    RULES FOR ALL PENDING SIGNALS:
    - Same honest conviction bar as trades — do NOT lower standards for pending entries
    - ONE direction per asset per cycle (no long+short brackets on same symbol)
-   - Up to ~7 total: ~2 conviction ladders + ~5 watchlist breakouts
+   - Up to 16 total: up to 6 conviction ladders + up to 10 watchlist breakouts
    - If no honest pending setups exist, output an empty array — never pad
    TRIGGER DISTANCE (critical — signals expire in 30 minutes):
    - Crypto moves ~0.1-0.4% in a typical 30-minute window
