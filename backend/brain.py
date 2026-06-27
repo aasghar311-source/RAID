@@ -1133,9 +1133,17 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         # Pending mode: save signals to DB; monitor fires them on triggers.
         pending = brain_json.get("pending_signals") or []
         regime_by_asset = brain_json.get("regime_by_asset") or {}
+        # Filter out signals below MIN_CONFIDENCE.
+        filtered = []
         for sig in pending:
             sig["regime"] = regime_by_asset.get(sig.get("symbol"), "UNKNOWN")
-        await db.save_pending_signals(pending)
+            prob = float(sig.get("probability") or 0)
+            if prob < config.MIN_CONFIDENCE:
+                log.info("PENDING: skip %s prob=%.2f < floor %.2f",
+                         sig.get("symbol"), prob, config.MIN_CONFIDENCE)
+                continue
+            filtered.append(sig)
+        await db.save_pending_signals(filtered)
         entries = 0
         log.info("BRAIN: pending mode ON -- saved %d signals, skipped immediate", len(pending))
     else:
