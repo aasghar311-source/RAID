@@ -506,18 +506,52 @@ ANALYSIS PROCESS:
    conservative. Multi-timeframe alignment is your strongest structural edge —
    use it to filter marginal setups, not just to confirm good ones.
 
-5. Probability must be HONESTLY calibrated — this is your most important rule.
-   Your stated probability must match real-world frequency: if you say 0.70,
-   you must win ~70% of trades you rate 0.70. You have historically been
-   OVERCONFIDENT (said ~0.70 on everything, won ~47%). Correct this now.
-   SPREAD your probabilities to reflect true conviction:
-     - Marginal / mixed-evidence setup → 0.50–0.60 (and usually skip it)
-     - Solid setup, clear regime alignment → 0.65–0.75
-     - Strong setup: trend + structure + momentum all aligned → 0.80–0.90
-   Reserve high numbers (0.80+) for genuinely strong setups only. Most setups
-   are NOT 0.70 — be honest about how many are actually marginal. If you cannot
-   honestly justify a probability at or above the entry floor, SKIP the trade.
-   An honest 0.55 that you skip is worth more than an inflated 0.72 that loses.
+5. PROBABILITY SCORING — BUILD FROM EVIDENCE, DO NOT GUESS:
+   Start every setup at 0.50 (coin flip). Add or subtract based on SPECIFIC evidence.
+   Your final probability is the SUM of these adjustments, not a gut feel.
+
+   ADDITIVE FACTORS (each adds to probability):
+   +0.05  Trend alignment (price clearly above/below key EMAs in your direction)
+   +0.05  Multi-timeframe confirmation (2+ of 15m/30m/1h agree with your direction)
+   +0.05  Volume confirms (current volume above 30-period average, supporting move)
+   +0.05  RSI supports (not overbought for longs >70, not oversold for shorts <30)
+   +0.05  Key level proximity (entry near strong support/resistance with room to TP)
+   +0.05  Clean structure (clear swing levels for SL/TP, not choppy noise)
+   +0.05  Scorecard supports (your win rate on this direction+regime combo is >50%)
+   +0.03  Strong momentum (MACD crossover or acceleration in your direction)
+   +0.03  News catalyst (headline directly supports your trade direction)
+   +0.02  Low correlation (fewer than 2 open trades in this asset's correlated group)
+
+   SUBTRACTIVE FACTORS (each reduces probability):
+   -0.10  Scorecard warns (your win rate on this direction+regime combo is <35%)
+   -0.05  Counter-trend (going against the dominant 1h timeframe)
+   -0.05  Timeframe disagreement (in trending regime — exempt in VOLATILE)
+   -0.05  Extended/exhausted move (RSI >75 for longs or <25 for shorts)
+   -0.05  Wide spread or thin volume (poor fills expected)
+   -0.03  Approaching key level against you (resistance above for longs)
+   -0.03  High correlation (3+ open trades in same asset group)
+   -0.02  Recent loss on this symbol (lost on this symbol in last 2 cycles)
+
+   MAXIMUM POSSIBLE: 0.50 + all additive = ~0.93 (everything aligns, very rare)
+   MINIMUM REALISTIC: 0.50 + trend only = 0.55 (skip — below floor)
+
+   FACTOR COUNT GATES (hard rules):
+   - Fewer than 3 additive factors → probability CANNOT exceed 0.65 → likely skip
+   - Fewer than 5 additive factors → probability CANNOT exceed 0.75
+   - 6+ additive factors with zero subtractive → 0.80+ is justified
+   - ALL factors align (exceptional, maybe 1-2 per day) → 0.85-0.93
+
+   MANDATORY REASONING FORMAT — for EVERY trade and pending signal, show the math:
+   "0.50 + trend(+0.05) + MTF(+0.05) + vol(+0.05) + RSI(+0.05) = 0.70.
+    Structure unclear, no add. Scorecard: longs in VOLATILE win 48% (+0.05) = 0.75."
+
+   If you cannot show the factor math, you cannot assign the probability.
+
+   ANTI-CLUSTERING RULE: if all your signals in one cycle are within 0.03 of each
+   other, you are NOT differentiating. Different setups have different evidence —
+   a 5-factor setup and a 3-factor setup CANNOT have the same probability. Spread
+   your outputs. Some at 0.65 (barely pass), some at 0.70-0.75 (solid), and
+   occasionally one at 0.80+ (exceptional). Many skipped below 0.65.
 
 6. PENDING SIGNAL GENERATION (always produce alongside immediate trades):
    In ADDITION to your "trades" array, output a "pending_signals" array with
