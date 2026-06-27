@@ -468,6 +468,17 @@ async def _signal_monitor_loop(db_):
                     _rejected.add(sig["id"])
                     continue
 
+                # Enforce minimum SL distance (crypto noise floor).
+                min_sl_pct = 0.015  # 1.5% minimum from entry
+                if long_like:
+                    min_sl = live_price * (1 - min_sl_pct)
+                    if stop_loss > min_sl:
+                        stop_loss = min_sl
+                elif not long_like:
+                    min_sl = live_price * (1 + min_sl_pct)
+                    if stop_loss < min_sl:
+                        stop_loss = min_sl
+
                 # --- Compute size and open the trade ---
                 equity = await db_.get_equity()
                 sizing_state = await db_.get_sizing_state()

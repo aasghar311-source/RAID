@@ -827,6 +827,17 @@ async def _execute_brain_trades(
             log.info("BRAIN: skip %s — no usable entry price", symbol)
             continue
 
+        # Enforce minimum SL distance (crypto noise floor).
+        min_sl_pct = 0.015  # 1.5% minimum from entry
+        if direction in ("long", "yes"):
+            min_sl = entry_price * (1 - min_sl_pct)
+            if stop_loss > min_sl:
+                stop_loss = min_sl
+        elif direction in ("short", "no"):
+            min_sl = entry_price * (1 + min_sl_pct)
+            if stop_loss < min_sl:
+                stop_loss = min_sl
+
         # If price has already run past Claude's stop, the entry is invalid (it
         # would stop out on the first monitor tick) — skip rather than book it.
         if stop_loss > 0:
