@@ -291,22 +291,49 @@ async def monitor_positions(db):
                 log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], close_reason, pnl)
                 continue
 
-            # Max-hold exit: close genuinely stale trades that never hit SL/TP,
-            # so they stop occupying a slot. SL/TP above always takes priority.
+            # MAT (Matured Exit) system — time-based checkpoints.
+            # 0-4h: normal trading (SL/trail/TP above handle it)
+            # 4h+:  close if profit >= 0.75% (matured_profit)
+            # 4-6h: close if profit >= 0.35% (breakeven_exit — covers fees)
+            # 6h:   close regardless (max_hold_exit)
             if config.MAX_HOLD_EXIT_ENABLED and trade.get("open_time"):
                 try:
                     opened = datetime.fromisoformat(str(trade["open_time"]).replace("Z", "+00:00"))
                     hours_open = (datetime.now(timezone.utc) - opened).total_seconds() / 3600.0
+                    size_usd = trade.get("size_usd") or 0
+                    pnl_now = compute_pnl(direction, entry, price, size_usd)
+                    profit_pct = pnl_now / size_usd if size_usd > 0 else 0
+
+                    # 6h hard ceiling — close no matter what
                     if hours_open >= config.MAX_HOLD_HOURS:
-                        pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
-                        await db.close_trade(trade["id"], price, pnl, "max_hold_exit")
+                        await db.close_trade(trade["id"], price, pnl_now, "max_hold_exit")
                         log.info(
                             "TRADE CLOSE %s %s reason=max_hold_exit hours=%.1f pnl=$%.2f",
-                            trade["market"], trade["symbol"], hours_open, pnl,
+                            trade["market"], trade["symbol"], hours_open, pnl_now,
                         )
                         continue
+
+                    # 4h+ checkpoint — take matured profit
+                    if hours_open >= config.MAT_CHECKPOINT_HOURS:
+                        if profit_pct >= config.MAT_PROFIT_PCT:
+                            await db.close_trade(trade["id"], price, pnl_now, "matured_profit")
+                            log.info(
+                                "TRADE CLOSE %s %s reason=matured_profit hours=%.1f profit=%.2f%% pnl=$%.2f",
+                                trade["market"], trade["symbol"], hours_open, profit_pct * 100, pnl_now,
+                            )
+                            continue
+
+                        # 4-6h window — take breakeven (covers fees)
+                        if profit_pct >= config.MAT_BREAKEVEN_PCT:
+                            await db.close_trade(trade["id"], price, pnl_now, "breakeven_exit")
+                            log.info(
+                                "TRADE CLOSE %s %s reason=breakeven_exit hours=%.1f profit=%.2f%% pnl=$%.2f",
+                                trade["market"], trade["symbol"], hours_open, profit_pct * 100, pnl_now,
+                            )
+                            continue
+
                 except Exception as exc:  # noqa: BLE001
-                    log.error("max_hold check failed for %s: %s", trade.get("id"), exc)
+                    log.error("mat_exit check failed for %s: %s", trade.get("id"), exc)
 
             # No-progress exit: a trade that never went meaningfully green is a dud.
             # Cut it early instead of letting it bleed to the 3h max-hold. SL/TP and

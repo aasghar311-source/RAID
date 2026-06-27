@@ -85,7 +85,11 @@ TRAIL_TRIGGER_PCT  = 0.005
 TRAIL_STEP_PCT     = 0.003
 ADVERSE_MOVE_PCT   = 0.04   # override fires only on violent moves (2x stop), not at stop level
 AI_OVERRIDE_EXIT_ENABLED = True   # set False to fully disable discretionary exits
-MAX_HOLD_HOURS = 3           # close trades older than this if not already SL/TP'd (frees stuck slots)
+MAX_HOLD_HOURS = 6           # final forced close — no trade lives longer than this
+# Matured exit (MAT) system — time-based checkpoints
+MAT_CHECKPOINT_HOURS = 4     # first checkpoint: close if nicely profitable
+MAT_PROFIT_PCT = 0.0075      # 0.75% profit threshold at checkpoint (good enough, take it)
+MAT_BREAKEVEN_PCT = 0.0035   # 0.35% covers round-trip fees — close as breakeven
 MAX_HOLD_EXIT_ENABLED = True # set False to disable stale-trade exits
 # No-progress exit: kill trades that never go meaningfully green (the dead-trade bucket).
 # Evidence: losing trades peaked at ~0.45-0.59% avg; winners showed green early. A trade still
