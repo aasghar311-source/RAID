@@ -62,6 +62,7 @@ class ScanResult:
     funding_rate: float = 0.0  # Kraken Futures perpetual rate (pos=crowded long, neg=crowded short)
     order_book: dict = field(default_factory=dict)  # Top 3 bid/ask walls by USD volume
     open_interest: float = 0.0  # Kraken Futures perpetual OI (contract value)
+    fear_greed: int = 50  # Crypto Fear & Greed Index (0=extreme fear, 100=extreme greed)
     scan_time: str = None
     error: str = None
 
@@ -151,6 +152,23 @@ async def _fetch_order_book(client, pair: str) -> dict:
     return {}
 
 
+async def fetch_fear_greed() -> int:
+    """Fetch Crypto Fear & Greed Index from Alternative.me (free, no key needed).
+    Returns value 0-100 (0=extreme fear, 100=extreme greed), or 50 (neutral) on error.
+    One call per brain cycle — global market sentiment, not per-symbol."""
+    try:
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+            res = await client.get("https://api.alternative.me/fng/")
+            data = res.json().get("data", [])
+            if data:
+                val = int(data[0].get("value", 50))
+                log.info("FEAR_GREED: index=%d", val)
+                return val
+    except Exception as exc:  # noqa: BLE001
+        log.error("fetch_fear_greed failed: %s", exc)
+    return 50
+
+
 async def scan_kraken():
     """Scan liquid Kraken USD pairs and return a ScanResult per pair (never raises)."""
     # Pre-fetch funding rates + open interest once (separate Kraken Futures API — non-blocking on failure).
@@ -159,6 +177,12 @@ async def scan_kraken():
         funding_rates, oi_data = await fetch_funding_rates()
     except Exception as exc:  # noqa: BLE001
         log.warning("scan_kraken: funding rates unavailable: %s", exc)
+    # Fetch global Fear & Greed once (same value for all symbols).
+    fear_greed_value = 50
+    try:
+        fear_greed_value = await fetch_fear_greed()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("scan_kraken: fear & greed unavailable: %s", exc)
     results = []
     try:
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
@@ -308,6 +332,7 @@ async def scan_kraken():
                             funding_rate=funding_rates.get(altname, 0.0),
                             order_book=order_book_data,
                             open_interest=oi_data.get(altname, 0.0),
+                            fear_greed=fear_greed_value,
                             scan_time=_now_iso(),
                         )
                     )

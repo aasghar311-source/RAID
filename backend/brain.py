@@ -315,6 +315,7 @@ def _build_asset_context(scan_result, news_info: dict) -> dict:
         "funding_rate": round(getattr(scan_result, "funding_rate", 0.0), 6),
         "order_book": getattr(scan_result, "order_book", {}),
         "open_interest": round(getattr(scan_result, "open_interest", 0.0), 2),
+        "fear_greed": getattr(scan_result, "fear_greed", 50),
         "hour_cdt": now_cdt.hour,
     }
     return ctx
@@ -527,6 +528,7 @@ ANALYSIS PROCESS:
    +0.05  Funding rate aligns: check "funding_rate" in market data. Positive (>0.0001) = longs crowded = short has contrarian edge. Negative (<-0.0001) = shorts crowded = long has edge. Near zero = neutral, no factor.
    +0.05  Order book support: check "order_book" in market data. If a large bid wall (>$50K USD) sits near your SL level for longs, or a large ask wall sits near your SL for shorts, real-time liquidity confirms your structural level. No significant walls = no factor.
    +0.03  Open interest confirms: check "open_interest" in market data. High OI combined with funding_rate supporting your direction = strong conviction (positions are building AND crowding favors you). If OI is zero or unknown, no factor.
+   +0.03  Fear & Greed contrarian: check "fear_greed" in market data (0=extreme fear, 100=extreme greed). Longing when fear_greed < 25 (extreme fear) = contrarian edge. Shorting when fear_greed > 75 (extreme greed) = contrarian edge. Between 25-75 = neutral, no factor.
 
    SUBTRACTIVE FACTORS (each reduces probability):
    -0.10  Scorecard warns (your win rate on this direction+regime combo is <35%)
@@ -538,8 +540,9 @@ ANALYSIS PROCESS:
    -0.03  High correlation (3+ open trades in same asset group)
    -0.02  Recent loss on this symbol (lost on this symbol in last 2 cycles)
    -0.05  Funding rate opposes: longing when funding_rate strongly positive (>0.0002) or shorting when strongly negative (<-0.0002). Crowded positioning = mean-reversion risk.
+   -0.03  Fear & Greed crowded: longing when fear_greed > 75 (extreme greed) or shorting when fear_greed < 25 (extreme fear) = trading with the crowd at extremes. Between 25-75 = no penalty.
 
-   MAXIMUM POSSIBLE: 0.50 + all additive = ~0.98 (everything aligns, very rare)
+   MAXIMUM POSSIBLE: 0.50 + all additive = ~1.04 (everything aligns, very rare)
    MINIMUM REALISTIC: 0.50 + trend only = 0.55 (skip — below floor)
 
    FACTOR COUNT GATES (hard rules):
