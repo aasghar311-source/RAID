@@ -1,6 +1,7 @@
 """RAID scanner — async market data from Kraken, Kalshi, NewsAPI, plus a macro calendar."""
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -379,15 +380,22 @@ async def scan_news(symbols: list):
     for sym in symbols:
         out[sym] = {"headline": None, "sentiment": "neutral", "published_at": None}
     try:
-        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+        cc_key = os.environ.get("CRYPTOCOMPARE_API_KEY", "")
+        headers = {"Authorization": f"Apikey {cc_key}"} if cc_key else {}
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT, headers=headers) as client:
             res = await client.get(
-                "https://min-api.cryptocompare.com/data/v2/news",
+                "https://min-api.cryptocompare.com/data/v2/news/",
                 params={"lang": "EN", "sortOrder": "latest"},
             )
             response_json = res.json()
+            log.info("NEWS DEBUG: status=%d resp_type=%s msg=%s",
+                     res.status_code,
+                     response_json.get("Type"),
+                     str(response_json.get("Message", ""))[:100])
             raw_data = response_json.get("Data") or []
             articles = raw_data[:50] if isinstance(raw_data, list) else []
-            log.info("NEWS: got %d articles from CryptoCompare", len(articles))
+            log.info("NEWS: got %d articles from CryptoCompare (key=%s)",
+                     len(articles), "YES" if cc_key else "NO")
             if not articles:
                 return out
             # Build symbol lookup: strip "USD" suffix for matching
