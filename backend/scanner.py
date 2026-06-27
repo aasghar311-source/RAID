@@ -290,19 +290,32 @@ async def scan_news(symbols: list):
     try:
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
             res = await client.get(
-                "https://min-api.cryptocompare.com/data/v2/news/",
+                "https://min-api.cryptocompare.com/data/v2/news",
                 params={"lang": "EN", "sortOrder": "latest"},
             )
-            raw_data = res.json().get("Data") or []
+            response_json = res.json()
+            raw_data = response_json.get("Data") or []
             articles = raw_data[:50] if isinstance(raw_data, list) else []
+            log.info("NEWS: got %d articles from CryptoCompare", len(articles))
             if not articles:
                 return out
             # Build symbol lookup: strip "USD" suffix for matching
             # e.g. "BTCUSD" -> "BTC", "ETHUSD" -> "ETH"
             sym_map = {}
+            # Kraken ticker -> CryptoCompare ticker aliases
+            kraken_to_cc = {"XBT": "BTC", "XDG": "DOGE"}
             for sym in symbols:
                 base = sym.replace("USD", "").upper()
                 sym_map[base] = sym
+                # Also map the CryptoCompare alias back to this symbol
+                if base in kraken_to_cc:
+                    sym_map[kraken_to_cc[base]] = sym
+                # Reverse: if someone passes BTCUSD, also map XBT
+            cc_to_kraken = {v: k for k, v in kraken_to_cc.items()}
+            for sym in symbols:
+                base = sym.replace("USD", "").upper()
+                if base in cc_to_kraken:
+                    sym_map[cc_to_kraken[base]] = sym
             # Also map full names for common cryptos
             name_map = {
                 "BITCOIN": "BTC", "ETHEREUM": "ETH", "SOLANA": "SOL",
@@ -347,6 +360,9 @@ async def scan_news(symbols: list):
                             "sentiment": _score_sentiment(combined),
                             "published_at": pub_str,
                         }
+        matched = [s for s in out if out[s].get("headline")]
+        log.info("NEWS: matched %d/%d symbols: %s", len(matched), len(symbols),
+                 matched[:10] if matched else "none")
     except Exception as exc:  # noqa: BLE001
         log.error("scan_news (CryptoCompare) failed: %s", exc)
     return out
