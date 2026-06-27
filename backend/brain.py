@@ -771,7 +771,7 @@ async def _call_claude(
         resp = await _client.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=8192,
-            system=[{"type": "text", "text": _SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
         raw = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
