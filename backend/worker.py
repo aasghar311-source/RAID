@@ -479,6 +479,21 @@ async def _signal_monitor_loop(db_):
                     if stop_loss < min_sl:
                         stop_loss = min_sl
 
+                # Post-enforcement R:R check: min SL may have widened the stop,
+                # breaking the 1.5:1 R:R that the brain-side gate approved.
+                # Reject the fill if the ACTUAL enforced levels fail R:R.
+                if long_like:
+                    _fill_risk = abs(live_price - stop_loss)
+                    _fill_reward = abs(take_profit - live_price)
+                else:
+                    _fill_risk = abs(stop_loss - live_price)
+                    _fill_reward = abs(live_price - take_profit)
+                if _fill_risk > 0 and (_fill_reward / _fill_risk) < 1.5:
+                    log.info("PENDING: skip %s fill R:R=%.2f < 1.5:1 after min-SL widening (risk=%.6f reward=%.6f)",
+                             symbol, _fill_reward / _fill_risk, _fill_risk, _fill_reward)
+                    _rejected.add(sig["id"])
+                    continue
+
                 # --- Compute size and open the trade ---
                 equity = await db_.get_equity()
                 sizing_state = await db_.get_sizing_state()
