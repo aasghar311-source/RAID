@@ -1198,6 +1198,22 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
                 log.info("PENDING: skip %s prob=%.2f < floor %.2f",
                          sig.get("symbol"), prob, config.MIN_CONFIDENCE)
                 continue
+            # Enforce minimum 1.5:1 reward-to-risk ratio (brain prompt says it, code enforces it).
+            _trig = float(sig.get("trigger_price") or 0)
+            _sl = float(sig.get("stop_loss") or 0)
+            _tp = float(sig.get("take_profit") or 0)
+            if _trig > 0 and _sl > 0 and _tp > 0:
+                _dir = sig.get("direction", "")
+                if _dir in ("long", "yes"):
+                    _risk = abs(_trig - _sl)
+                    _reward = abs(_tp - _trig)
+                else:
+                    _risk = abs(_sl - _trig)
+                    _reward = abs(_trig - _tp)
+                if _risk > 0 and (_reward / _risk) < 1.5:
+                    log.info("PENDING: skip %s R:R=%.2f < 1.5:1 (risk=%.6f reward=%.6f)",
+                             sig.get("symbol"), _reward / _risk, _risk, _reward)
+                    continue
             filtered.append(sig)
         await db.save_pending_signals(filtered)
         entries = 0
