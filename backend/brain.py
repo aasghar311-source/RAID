@@ -313,6 +313,7 @@ def _build_asset_context(scan_result, news_info: dict) -> dict:
         "news_headline": (news_info or {}).get("headline"),
         "news_sentiment": (news_info or {}).get("sentiment", "neutral"),
         "funding_rate": round(getattr(scan_result, "funding_rate", 0.0), 6),
+        "order_book": getattr(scan_result, "order_book", {}),
         "hour_cdt": now_cdt.hour,
     }
     return ctx
@@ -523,6 +524,7 @@ ANALYSIS PROCESS:
    +0.03  News catalyst (headline directly supports your trade direction)
    +0.02  Low correlation (fewer than 2 open trades in this asset's correlated group)
    +0.05  Funding rate aligns: check "funding_rate" in market data. Positive (>0.0001) = longs crowded = short has contrarian edge. Negative (<-0.0001) = shorts crowded = long has edge. Near zero = neutral, no factor.
+   +0.05  Order book support: check "order_book" in market data. If a large bid wall (>$50K USD) sits near your SL level for longs, or a large ask wall sits near your SL for shorts, real-time liquidity confirms your structural level. No significant walls = no factor.
 
    SUBTRACTIVE FACTORS (each reduces probability):
    -0.10  Scorecard warns (your win rate on this direction+regime combo is <35%)
@@ -607,6 +609,10 @@ ANALYSIS PROCESS:
      move based on structure, not your entry price. A trade near tight structure
      gets a tight SL (0.8%). A trade with wide structure gets a wide SL (3%).
    - If no clear swing level exists, use the nearest EMA (ema50 or ema200).
+   - ORDER BOOK: if "order_book" data shows a large bid wall near your SL level
+     (for longs), place SL just below that wall for extra structural protection.
+     For shorts, look for a large ask wall above your SL. Walls > $50K USD are
+     significant. This supplements swing levels, not replaces them.
    - Maximum SL distance: 4% from entry. Beyond that, skip the trade.
    Place take_profit at the next structural target:
    - LONGS: TP at the next swing high or resistance above entry

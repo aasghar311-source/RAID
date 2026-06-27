@@ -59,6 +59,7 @@ class ScanResult:
     ohlcv_15m: list = field(default_factory=list)  # 15-minute candles for MTF trend
     ohlcv_30m: list = field(default_factory=list)  # 30-minute candles for MTF trend
     funding_rate: float = 0.0  # Kraken Futures perpetual rate (pos=crowded long, neg=crowded short)
+    order_book: dict = field(default_factory=dict)  # Top 3 bid/ask walls by USD volume
     scan_time: str = None
     error: str = None
 
@@ -109,6 +110,37 @@ async def fetch_funding_rates() -> dict:
     except Exception as exc:  # noqa: BLE001
         log.error("fetch_funding_rates failed: %s", exc)
     return out
+
+
+async def _fetch_order_book(client, pair: str) -> dict:
+    """Fetch top 3 bid/ask walls from Kraken order book (reuses existing httpx client).
+    Returns {"bid_walls": [{"price": X, "usd": Y}], "ask_walls": [...]} sorted by USD volume.
+    Returns {} on error — never raises."""
+    try:
+        res = await client.get(
+            f"{KRAKEN_BASE}/Depth", params={"pair": pair, "count": 25}
+        )
+        data = res.json().get("result", {})
+        for _, book in data.items():
+            bid_walls, ask_walls = [], []
+            for e in book.get("bids", []):
+                try:
+                    p, v = float(e[0]), float(e[1])
+                    bid_walls.append({"price": round(p, 6), "usd": round(p * v, 2)})
+                except (IndexError, TypeError, ValueError):
+                    continue
+            for e in book.get("asks", []):
+                try:
+                    p, v = float(e[0]), float(e[1])
+                    ask_walls.append({"price": round(p, 6), "usd": round(p * v, 2)})
+                except (IndexError, TypeError, ValueError):
+                    continue
+            bid_walls.sort(key=lambda w: w["usd"], reverse=True)
+            ask_walls.sort(key=lambda w: w["usd"], reverse=True)
+            return {"bid_walls": bid_walls[:3], "ask_walls": ask_walls[:3]}
+    except Exception as exc:  # noqa: BLE001
+        log.error("_fetch_order_book failed for %s: %s", pair, exc)
+    return {}
 
 
 async def scan_kraken():
@@ -249,6 +281,12 @@ async def scan_kraken():
                             break
                     except Exception as exc:  # noqa: BLE001
                         log.error("Kraken 30m OHLC failed for %s: %s", altname, exc)
+                    # Order book depth (reuses existing httpx client).
+                    order_book_data = {}
+                    try:
+                        order_book_data = await _fetch_order_book(client, altname)
+                    except Exception as exc:  # noqa: BLE001
+                        log.error("Order book fetch failed for %s: %s", altname, exc)
                     results.append(
                         ScanResult(
                             market="crypto",
@@ -260,6 +298,7 @@ async def scan_kraken():
                             current_price=current or 0.0,
                             volume_24h=volumes.get(altname),
                             funding_rate=funding_rates.get(altname, 0.0),
+                            order_book=order_book_data,
                             scan_time=_now_iso(),
                         )
                     )
