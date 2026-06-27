@@ -61,6 +61,7 @@ class ScanResult:
     ohlcv_30m: list = field(default_factory=list)  # 30-minute candles for MTF trend
     funding_rate: float = 0.0  # Kraken Futures perpetual rate (pos=crowded long, neg=crowded short)
     order_book: dict = field(default_factory=dict)  # Top 3 bid/ask walls by USD volume
+    open_interest: float = 0.0  # Kraken Futures perpetual OI (contract value)
     scan_time: str = None
     error: str = None
 
@@ -81,13 +82,13 @@ _FUTURES_TO_SPOT = {
 }
 
 
-async def fetch_funding_rates() -> dict:
-    """Fetch perpetual funding rates from Kraken Futures public API (no key needed).
-    Returns {spot_altname: funding_rate} e.g. {"XBTUSD": 0.000023}.
+async def fetch_funding_rates() -> tuple:
+    """Fetch perpetual funding rates AND open interest from Kraken Futures public API.
+    Returns (rates_dict, oi_dict) e.g. ({"XBTUSD": 0.000023}, {"XBTUSD": 5432.1}).
     Positive rate = longs paying shorts = crowded long = short has contrarian edge.
-    Negative rate = shorts paying longs = crowded short = long has contrarian edge.
-    Returns {} on any error — never raises."""
-    out = {}
+    Returns ({}, {}) on any error — never raises."""
+    rates = {}
+    oi = {}
     try:
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
             res = await client.get(f"{KRAKEN_FUTURES_BASE}/tickers")
@@ -104,13 +105,19 @@ async def fetch_funding_rates() -> dict:
                 rate = t.get("fundingRate")
                 if rate is not None:
                     try:
-                        out[spot] = float(rate)
+                        rates[spot] = float(rate)
                     except (TypeError, ValueError):
                         pass
-        log.info("FUNDING: fetched %d rates", len(out))
+                open_int = t.get("openInterest")
+                if open_int is not None:
+                    try:
+                        oi[spot] = float(open_int)
+                    except (TypeError, ValueError):
+                        pass
+        log.info("FUNDING: fetched %d rates, %d OI values", len(rates), len(oi))
     except Exception as exc:  # noqa: BLE001
         log.error("fetch_funding_rates failed: %s", exc)
-    return out
+    return rates, oi
 
 
 async def _fetch_order_book(client, pair: str) -> dict:
@@ -146,10 +153,10 @@ async def _fetch_order_book(client, pair: str) -> dict:
 
 async def scan_kraken():
     """Scan liquid Kraken USD pairs and return a ScanResult per pair (never raises)."""
-    # Pre-fetch funding rates once (separate Kraken Futures API — non-blocking on failure).
-    funding_rates = {}
+    # Pre-fetch funding rates + open interest once (separate Kraken Futures API — non-blocking on failure).
+    funding_rates, oi_data = {}, {}
     try:
-        funding_rates = await fetch_funding_rates()
+        funding_rates, oi_data = await fetch_funding_rates()
     except Exception as exc:  # noqa: BLE001
         log.warning("scan_kraken: funding rates unavailable: %s", exc)
     results = []
@@ -300,6 +307,7 @@ async def scan_kraken():
                             volume_24h=volumes.get(altname),
                             funding_rate=funding_rates.get(altname, 0.0),
                             order_book=order_book_data,
+                            open_interest=oi_data.get(altname, 0.0),
                             scan_time=_now_iso(),
                         )
                     )

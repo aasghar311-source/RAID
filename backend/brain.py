@@ -314,6 +314,7 @@ def _build_asset_context(scan_result, news_info: dict) -> dict:
         "news_sentiment": (news_info or {}).get("sentiment", "neutral"),
         "funding_rate": round(getattr(scan_result, "funding_rate", 0.0), 6),
         "order_book": getattr(scan_result, "order_book", {}),
+        "open_interest": round(getattr(scan_result, "open_interest", 0.0), 2),
         "hour_cdt": now_cdt.hour,
     }
     return ctx
@@ -525,6 +526,7 @@ ANALYSIS PROCESS:
    +0.02  Low correlation (fewer than 2 open trades in this asset's correlated group)
    +0.05  Funding rate aligns: check "funding_rate" in market data. Positive (>0.0001) = longs crowded = short has contrarian edge. Negative (<-0.0001) = shorts crowded = long has edge. Near zero = neutral, no factor.
    +0.05  Order book support: check "order_book" in market data. If a large bid wall (>$50K USD) sits near your SL level for longs, or a large ask wall sits near your SL for shorts, real-time liquidity confirms your structural level. No significant walls = no factor.
+   +0.03  Open interest confirms: check "open_interest" in market data. High OI combined with funding_rate supporting your direction = strong conviction (positions are building AND crowding favors you). If OI is zero or unknown, no factor.
 
    SUBTRACTIVE FACTORS (each reduces probability):
    -0.10  Scorecard warns (your win rate on this direction+regime combo is <35%)
