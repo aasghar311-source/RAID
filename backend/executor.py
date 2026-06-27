@@ -95,10 +95,18 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             gain = (current_price - entry) / entry
             if gain < config.TRAIL_TRIGGER_PCT:
                 return
-            steps = int((gain - config.TRAIL_TRIGGER_PCT) / config.TRAIL_STEP_PCT)
-            new_sl = entry * (1 + steps * config.TRAIL_STEP_PCT)
+            # Progressive trail: lock more profit as gain grows.
+            # 1.0-1.5%: lock 50% → room for pullback on fresh moves
+            # 1.5-2.0%: lock 70% → tightening on real profit
+            # 2.0%+:    lock 80% → aggressive near TP territory
+            if gain >= 0.02:
+                lock_pct = 0.80
+            elif gain >= 0.015:
+                lock_pct = 0.70
+            else:
+                lock_pct = 0.50
+            new_sl = entry * (1 + gain * lock_pct)
             # Fee-protected floor: never trail to a level that nets a loss after fees.
-            # Round-trip Kraken fees = 0.32%. Floor at 0.40% ensures net-positive exit.
             fee_floor = entry * 1.004
             if new_sl < fee_floor:
                 new_sl = fee_floor
@@ -109,8 +117,14 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             gain = (entry - current_price) / entry
             if gain < config.TRAIL_TRIGGER_PCT:
                 return
-            steps = int((gain - config.TRAIL_TRIGGER_PCT) / config.TRAIL_STEP_PCT)
-            new_sl = entry * (1 - steps * config.TRAIL_STEP_PCT)
+            # Progressive trail: lock more profit as gain grows.
+            if gain >= 0.02:
+                lock_pct = 0.80
+            elif gain >= 0.015:
+                lock_pct = 0.70
+            else:
+                lock_pct = 0.50
+            new_sl = entry * (1 - gain * lock_pct)
             # Fee-protected floor: never trail to a level that nets a loss after fees.
             fee_floor = entry * 0.996
             if new_sl > fee_floor:
