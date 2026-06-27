@@ -548,7 +548,7 @@ async def _signal_monitor_loop(db_):
 
         except Exception as exc:  # noqa: BLE001
             log.error("signal monitor loop error: %s", exc)
-        await asyncio.sleep(5)
+        await asyncio.sleep(0.5)
 
 
 # ── Health endpoint ───────────────────────────────────────────────────────
