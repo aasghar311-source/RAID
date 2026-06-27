@@ -528,8 +528,9 @@ ANALYSIS PROCESS:
    at different trigger prices to scale in at better levels.
    - Trigger type: "limit" or "stop" (your choice based on the setup)
    - Probability: your REAL conviction right now (same honest bar as trades)
-   - SPLIT SIZING: divide the normal position size across the ladder entries.
-     2 orders = half-size each (size_pct is already the SPLIT amount per order).
+   - SPLIT SIZING: divide the normal position size EQUALLY across all ladder entries.
+     If you use N ladder entries, each gets 1/N of the position size (size_pct is
+     the SPLIT amount per order, not the full size). 3 ladders = 1/3 each, 6 = 1/6 each.
      Both orders share a ladder_group string (e.g. "BTC-lad-1").
    - Trigger price MUST be away from current price (wait for pullback/breakout)
 
