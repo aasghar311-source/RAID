@@ -1145,7 +1145,7 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
             filtered.append(sig)
         await db.save_pending_signals(filtered)
         entries = 0
-        log.info("BRAIN: pending mode ON -- saved %d signals, skipped immediate", len(pending))
+        log.info("BRAIN: pending mode ON -- saved %d signals (%d filtered), skipped immediate", len(filtered), len(pending) - len(filtered))
     else:
         entries = await _execute_brain_trades(
             brain_json=brain_json,
