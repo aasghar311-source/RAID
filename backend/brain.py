@@ -296,27 +296,49 @@ def _build_asset_context(scan_result, news_info: dict) -> dict:
 
     now_cdt = datetime.now(CDT)
 
+    # Smart rounding: 2dp for prices > $1, 6dp for sub-dollar coins.
+    _rd = 2 if price > 1 else 6
+    def _r(v):
+        return round(v, _rd) if v is not None else None
+
+    # Compress order book: [[price, usd_volume]] arrays, top 3 walls each side.
+    ob_raw = getattr(scan_result, "order_book", {})
+    ob = None
+    if ob_raw:
+        bw = ob_raw.get("bid_walls") or []
+        aw = ob_raw.get("ask_walls") or []
+        if bw or aw:
+            ob = {
+                "b": [[round(w["price"], _rd), int(w["usd"])] for w in bw[:3]],
+                "a": [[round(w["price"], _rd), int(w["usd"])] for w in aw[:3]],
+            }
+
+    # Truncate headline to 80 chars.
+    headline = (news_info or {}).get("headline")
+    if headline and len(headline) > 80:
+        headline = headline[:80]
+
     ctx = {
-        "price": round(price, 6),
-        "change_24h_pct": change_24h,
-        "ema20": round(ema20, 6) if ema20 else None,
-        "ema50": round(ema50, 6) if ema50 else None,
-        "ema200": round(ema200, 6) if ema200 else None,
-        "rsi14": round(rsi, 1),
-        "macd_state": macd,
-        "swing_highs": swing_highs,
-        "swing_lows": swing_lows,
-        "vol_30d": round(vol, 4),
-        "htf_1h_trend": _htf_trend_label(getattr(scan_result, "ohlcv_1h", [])),
-        "tf_30m_trend": _htf_trend_label(getattr(scan_result, "ohlcv_30m", [])),
-        "tf_15m_trend": _htf_trend_label(getattr(scan_result, "ohlcv_15m", [])),
-        "news_headline": (news_info or {}).get("headline"),
-        "news_sentiment": (news_info or {}).get("sentiment", "neutral"),
-        "funding_rate": round(getattr(scan_result, "funding_rate", 0.0), 6),
-        "order_book": getattr(scan_result, "order_book", {}),
-        "open_interest": round(getattr(scan_result, "open_interest", 0.0), 2),
-        "fear_greed": getattr(scan_result, "fear_greed", 50),
-        "hour_cdt": now_cdt.hour,
+        "px": _r(price),
+        "chg24": change_24h,
+        "e20": _r(ema20),
+        "e50": _r(ema50),
+        "e200": _r(ema200),
+        "rsi": round(rsi, 1),
+        "macd": macd,
+        "shi": swing_highs[:3],
+        "slo": swing_lows[:3],
+        "vol": round(vol, 4),
+        "t1h": _htf_trend_label(getattr(scan_result, "ohlcv_1h", [])),
+        "t30m": _htf_trend_label(getattr(scan_result, "ohlcv_30m", [])),
+        "t15m": _htf_trend_label(getattr(scan_result, "ohlcv_15m", [])),
+        "news": headline,
+        "nsent": (news_info or {}).get("sentiment", "neutral"),
+        "fr": round(getattr(scan_result, "funding_rate", 0.0), 6),
+        "ob": ob,
+        "oi": round(getattr(scan_result, "open_interest", 0.0), 2),
+        "fg": getattr(scan_result, "fear_greed", 50),
+        "hr": now_cdt.hour,
     }
     return ctx
 
@@ -395,6 +417,12 @@ def _build_scorecard(trades: list) -> dict:
 _SYSTEM_PROMPT = """You are the trading brain for RAID.
 Operator: Ali, Houston Texas (CDT timezone).
 You have complete control. No filter overrides you.
+
+DATA KEY LEGEND (market data uses compressed keys):
+px=price, chg24=24h change%, e20/e50/e200=EMA periods, rsi=RSI14, macd=MACD state,
+shi/slo=swing highs/lows (top 3), vol=30d volatility, t1h/t30m/t15m=timeframe trend,
+news=headline (80ch), nsent=news sentiment, fr=funding rate, ob=order book
+(b=bids a=asks as [[price,usd]]), oi=open interest, fg=fear&greed (0-100), hr=CDT hour.
 
 YOUR MISSION (burned in permanently):
 Floor target:     $155,000 by December 31 2026
@@ -525,10 +553,10 @@ ANALYSIS PROCESS:
    +0.03  Strong momentum (MACD crossover or acceleration in your direction)
    +0.03  News catalyst (headline directly supports your trade direction)
    +0.02  Low correlation (fewer than 2 open trades in this asset's correlated group)
-   +0.05  Funding rate aligns: check "funding_rate" in market data. Positive (>0.0001) = longs crowded = short has contrarian edge. Negative (<-0.0001) = shorts crowded = long has edge. Near zero = neutral, no factor.
-   +0.05  Order book support: check "order_book" in market data. If a large bid wall (>$50K USD) sits near your SL level for longs, or a large ask wall sits near your SL for shorts, real-time liquidity confirms your structural level. No significant walls = no factor.
-   +0.03  Open interest confirms: check "open_interest" in market data. High OI combined with funding_rate supporting your direction = strong conviction (positions are building AND crowding favors you). If OI is zero or unknown, no factor.
-   +0.03  Fear & Greed contrarian: check "fear_greed" in market data (0=extreme fear, 100=extreme greed). Longing when fear_greed < 25 (extreme fear) = contrarian edge. Shorting when fear_greed > 75 (extreme greed) = contrarian edge. Between 25-75 = neutral, no factor.
+   +0.05  Funding rate aligns: check "fr". Positive (>0.0001) = longs crowded = short edge. Negative (<-0.0001) = shorts crowded = long edge. Near zero = no factor.
+   +0.05  Order book support: check "ob". Large bid wall (>$50K) near SL for longs, or ask wall near SL for shorts = liquidity confirms structure. No walls = no factor.
+   +0.03  Open interest confirms: check "oi". High OI + aligned "fr" = strong conviction. Zero/unknown = no factor.
+   +0.03  Fear & Greed contrarian: check "fg" (0-100). Long when fg<25 or short when fg>75 = contrarian edge. 25-75 = no factor.
 
    SUBTRACTIVE FACTORS (each reduces probability):
    -0.10  Scorecard warns (your win rate on this direction+regime combo is <35%)
@@ -539,8 +567,8 @@ ANALYSIS PROCESS:
    -0.03  Approaching key level against you (resistance above for longs)
    -0.03  High correlation (3+ open trades in same asset group)
    -0.02  Recent loss on this symbol (lost on this symbol in last 2 cycles)
-   -0.05  Funding rate opposes: longing when funding_rate strongly positive (>0.0002) or shorting when strongly negative (<-0.0002). Crowded positioning = mean-reversion risk.
-   -0.03  Fear & Greed crowded: longing when fear_greed > 75 (extreme greed) or shorting when fear_greed < 25 (extreme fear) = trading with the crowd at extremes. Between 25-75 = no penalty.
+   -0.05  Funding rate opposes: longing when fr>0.0002 or shorting when fr<-0.0002. Crowded = reversion risk.
+   -0.03  Fear & Greed crowded: longing when fg>75 or shorting when fg<25 = with the crowd at extremes. 25-75 = no penalty.
 
    MAXIMUM POSSIBLE: 0.50 + all additive = ~1.04 (everything aligns, very rare)
    MINIMUM REALISTIC: 0.50 + trend only = 0.55 (skip — below floor)
@@ -614,10 +642,8 @@ ANALYSIS PROCESS:
      move based on structure, not your entry price. A trade near tight structure
      gets a tight SL (0.8%). A trade with wide structure gets a wide SL (3%).
    - If no clear swing level exists, use the nearest EMA (ema50 or ema200).
-   - ORDER BOOK: if "order_book" data shows a large bid wall near your SL level
-     (for longs), place SL just below that wall for extra structural protection.
-     For shorts, look for a large ask wall above your SL. Walls > $50K USD are
-     significant. This supplements swing levels, not replaces them.
+   - ORDER BOOK: if "ob" shows a large bid wall (>$50K) near SL (longs), place SL
+     just below it. For shorts, use ask wall above SL. Supplements swing levels.
    - Maximum SL distance: 4% from entry. Beyond that, skip the trade.
    Place take_profit at the next structural target:
    - LONGS: TP at the next swing high or resistance above entry
@@ -745,7 +771,7 @@ async def _call_claude(
         resp = await _client.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=8192,
-            system=_SYSTEM_PROMPT,
+            system=[{"type": "text", "text": _SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user_message}],
         )
         raw = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
@@ -1180,7 +1206,7 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
                 "regime": regime,
                 "reasoning": brain_json.get("cycle_assessment", ""),
                 "confidence": None,
-                "vol_30d": asset_ctx.get("vol_30d"),
+                "vol_30d": asset_ctx.get("vol"),
                 "trajectory": trajectory_status,
             })
         except Exception as exc:  # noqa: BLE001
