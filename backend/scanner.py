@@ -293,7 +293,8 @@ async def scan_news(symbols: list):
                 "https://min-api.cryptocompare.com/data/v2/news/",
                 params={"lang": "EN", "sortOrder": "latest"},
             )
-            articles = res.json().get("Data", [])[:50]
+            raw_data = res.json().get("Data") or []
+            articles = raw_data[:50] if isinstance(raw_data, list) else []
             if not articles:
                 return out
             # Build symbol lookup: strip "USD" suffix for matching
