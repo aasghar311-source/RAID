@@ -13,6 +13,7 @@ log = logging.getLogger("raid.scanner")
 KRAKEN_BASE = "https://api.kraken.com/0/public"
 KALSHI_BASE = "https://trading-api.kalshi.com/trade-api/v2"
 NEWS_BASE = "https://newsapi.org/v2/everything"
+KRAKEN_FUTURES_BASE = "https://futures.kraken.com/derivatives/api/v3"
 
 # 2026 macro calendar (UTC). Times are release/decision times.
 MACRO_EVENTS = [
@@ -57,6 +58,7 @@ class ScanResult:
     ohlcv_1h: list = field(default_factory=list)  # 1-hour candles for HTF trend
     ohlcv_15m: list = field(default_factory=list)  # 15-minute candles for MTF trend
     ohlcv_30m: list = field(default_factory=list)  # 30-minute candles for MTF trend
+    funding_rate: float = 0.0  # Kraken Futures perpetual rate (pos=crowded long, neg=crowded short)
     scan_time: str = None
     error: str = None
 
@@ -66,8 +68,57 @@ def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+# Kraken Futures symbol (PF_XBTUSD) -> Kraken Spot altname (XBTUSD) mapping
+_FUTURES_TO_SPOT = {
+    "XBT": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD", "XRP": "XRPUSD",
+    "DOGE": "XDGUSD", "ADA": "ADAUSD", "AVAX": "AVAXUSD", "LINK": "LINKUSD",
+    "MATIC": "MATICUSD", "DOT": "DOTUSD", "LTC": "LTCUSD", "UNI": "UNIUSD",
+    "AAVE": "AAVEUSD", "COMP": "COMPUSD", "ATOM": "ATOMUSD", "FIL": "FILUSD",
+    "XLM": "XLMUSD", "XMR": "XMRUSD", "ZEC": "ZECUSD", "NEAR": "NEARUSD",
+    "TRX": "TRXUSD", "SUI": "SUIUSD",
+}
+
+
+async def fetch_funding_rates() -> dict:
+    """Fetch perpetual funding rates from Kraken Futures public API (no key needed).
+    Returns {spot_altname: funding_rate} e.g. {"XBTUSD": 0.000023}.
+    Positive rate = longs paying shorts = crowded long = short has contrarian edge.
+    Negative rate = shorts paying longs = crowded short = long has contrarian edge.
+    Returns {} on any error — never raises."""
+    out = {}
+    try:
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+            res = await client.get(f"{KRAKEN_FUTURES_BASE}/tickers")
+            tickers = res.json().get("tickers", [])
+            for t in tickers:
+                symbol = t.get("symbol", "")
+                # Only perpetuals (PF_) carry funding rates; skip fixed futures (FI_)
+                if not symbol.startswith("PF_"):
+                    continue
+                base = symbol[3:].replace("USD", "").replace("EUR", "")
+                spot = _FUTURES_TO_SPOT.get(base)
+                if not spot:
+                    continue
+                rate = t.get("fundingRate")
+                if rate is not None:
+                    try:
+                        out[spot] = float(rate)
+                    except (TypeError, ValueError):
+                        pass
+        log.info("FUNDING: fetched %d rates", len(out))
+    except Exception as exc:  # noqa: BLE001
+        log.error("fetch_funding_rates failed: %s", exc)
+    return out
+
+
 async def scan_kraken():
     """Scan liquid Kraken USD pairs and return a ScanResult per pair (never raises)."""
+    # Pre-fetch funding rates once (separate Kraken Futures API — non-blocking on failure).
+    funding_rates = {}
+    try:
+        funding_rates = await fetch_funding_rates()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("scan_kraken: funding rates unavailable: %s", exc)
     results = []
     try:
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
@@ -208,6 +259,7 @@ async def scan_kraken():
                             ohlcv_30m=ohlcv_30m,
                             current_price=current or 0.0,
                             volume_24h=volumes.get(altname),
+                            funding_rate=funding_rates.get(altname, 0.0),
                             scan_time=_now_iso(),
                         )
                     )

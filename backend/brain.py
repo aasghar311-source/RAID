@@ -312,6 +312,7 @@ def _build_asset_context(scan_result, news_info: dict) -> dict:
         "tf_15m_trend": _htf_trend_label(getattr(scan_result, "ohlcv_15m", [])),
         "news_headline": (news_info or {}).get("headline"),
         "news_sentiment": (news_info or {}).get("sentiment", "neutral"),
+        "funding_rate": round(getattr(scan_result, "funding_rate", 0.0), 6),
         "hour_cdt": now_cdt.hour,
     }
     return ctx
@@ -521,6 +522,7 @@ ANALYSIS PROCESS:
    +0.03  Strong momentum (MACD crossover or acceleration in your direction)
    +0.03  News catalyst (headline directly supports your trade direction)
    +0.02  Low correlation (fewer than 2 open trades in this asset's correlated group)
+   +0.05  Funding rate aligns: check "funding_rate" in market data. Positive (>0.0001) = longs crowded = short has contrarian edge. Negative (<-0.0001) = shorts crowded = long has edge. Near zero = neutral, no factor.
 
    SUBTRACTIVE FACTORS (each reduces probability):
    -0.10  Scorecard warns (your win rate on this direction+regime combo is <35%)
@@ -531,8 +533,9 @@ ANALYSIS PROCESS:
    -0.03  Approaching key level against you (resistance above for longs)
    -0.03  High correlation (3+ open trades in same asset group)
    -0.02  Recent loss on this symbol (lost on this symbol in last 2 cycles)
+   -0.05  Funding rate opposes: longing when funding_rate strongly positive (>0.0002) or shorting when strongly negative (<-0.0002). Crowded positioning = mean-reversion risk.
 
-   MAXIMUM POSSIBLE: 0.50 + all additive = ~0.93 (everything aligns, very rare)
+   MAXIMUM POSSIBLE: 0.50 + all additive = ~0.98 (everything aligns, very rare)
    MINIMUM REALISTIC: 0.50 + trend only = 0.55 (skip — below floor)
 
    FACTOR COUNT GATES (hard rules):
