@@ -469,7 +469,7 @@ async def _signal_monitor_loop(db_):
                     continue
 
                 # Enforce minimum SL distance (crypto noise floor).
-                min_sl_pct = 0.015  # 1.5% minimum from entry
+                min_sl_pct = 0.02  # 2% minimum from entry
                 if long_like:
                     min_sl = live_price * (1 - min_sl_pct)
                     if stop_loss > min_sl:

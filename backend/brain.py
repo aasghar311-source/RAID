@@ -862,7 +862,7 @@ async def _execute_brain_trades(
             continue
 
         # Enforce minimum SL distance (crypto noise floor).
-        min_sl_pct = 0.015  # 1.5% minimum from entry
+        min_sl_pct = 0.02  # 2% minimum from entry
         if direction in ("long", "yes"):
             min_sl = entry_price * (1 - min_sl_pct)
             if stop_loss > min_sl:
