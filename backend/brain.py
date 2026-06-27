@@ -491,8 +491,16 @@ ANALYSIS PROCESS:
    Confluence scoring:
    - All three align with your direction → strong confirmation, standard prob
    - Two of three align → acceptable, note the dissenter in reasoning
-   - Only one or zero align → counter-trend; take ONLY with exceptional evidence
-     and explicitly lower probability (subtract 0.05–0.10 from your base read)
+   - Only one or zero align → counter-trend in trending regimes; take ONLY with
+     exceptional evidence and explicitly lower probability (subtract 0.05–0.10)
+   VOLATILE REGIME EXCEPTION: when an asset's regime is VOLATILE, timeframe
+   disagreement is EXPECTED and should NOT reduce your probability. Volatile
+   markets are your highest-edge environment historically. In VOLATILE regime:
+   - Trade momentum bursts and mean-reversion bounces
+   - Use the 5-minute structure as your primary signal (not HTF alignment)
+   - Set tighter TP targets (1.5-2.5% vs 3-4% for trending)
+   - Wider SL is acceptable (volatile = bigger swings = more noise)
+   - DO NOT skip a VOLATILE setup just because timeframes disagree
    Shorting when htf_1h_trend is "up" or longing when it is "down" requires
    explicit justification. When any trend is "sideways" or "unknown", be more
    conservative. Multi-timeframe alignment is your strongest structural edge —
