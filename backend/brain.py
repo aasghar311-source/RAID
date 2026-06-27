@@ -542,8 +542,8 @@ ANALYSIS PROCESS:
    - ALL factors align (exceptional, maybe 1-2 per day) → 0.85-0.93
 
    MANDATORY REASONING FORMAT — for EVERY trade and pending signal, show the math:
-   "0.50 + trend(+0.05) + MTF(+0.05) + vol(+0.05) + RSI(+0.05) = 0.70.
-    Structure unclear, no add. Scorecard: longs in VOLATILE win 48% (+0.05) = 0.75."
+   Use compact format: "T+MTF+V+RSI+struct=0.75" (first letter of each factor).
+   Only spell out if a factor is unusual or needs explanation.
 
    If you cannot show the factor math, you cannot assign the probability.
 
@@ -730,7 +730,7 @@ async def _call_claude(
     try:
         resp = await _client.messages.create(
             model=config.CLAUDE_MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
