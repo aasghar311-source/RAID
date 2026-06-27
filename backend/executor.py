@@ -97,6 +97,11 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
                 return
             steps = int((gain - config.TRAIL_TRIGGER_PCT) / config.TRAIL_STEP_PCT)
             new_sl = entry * (1 + steps * config.TRAIL_STEP_PCT)
+            # Fee-protected floor: never trail to a level that nets a loss after fees.
+            # Round-trip Kraken fees = 0.32%. Floor at 0.40% ensures net-positive exit.
+            fee_floor = entry * 1.004
+            if new_sl < fee_floor:
+                new_sl = fee_floor
             if current_sl is None or new_sl > current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
@@ -106,6 +111,10 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
                 return
             steps = int((gain - config.TRAIL_TRIGGER_PCT) / config.TRAIL_STEP_PCT)
             new_sl = entry * (1 - steps * config.TRAIL_STEP_PCT)
+            # Fee-protected floor: never trail to a level that nets a loss after fees.
+            fee_floor = entry * 0.996
+            if new_sl > fee_floor:
+                new_sl = fee_floor
             if current_sl is None or new_sl < current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
