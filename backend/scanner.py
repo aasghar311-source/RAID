@@ -277,46 +277,77 @@ def _score_sentiment(text: str):
     return "neutral"
 
 
-async def scan_news(symbols):
-    """Fetch recent headlines per symbol and return {symbol: {headline, sentiment, published_at}}."""
+async def scan_news(symbols: list):
+    """Fetch recent crypto headlines and match to symbols.
+    Uses CryptoCompare News API (free, no key needed, works from deployed servers).
+    Returns {symbol: {headline, sentiment, published_at}}."""
     out = {}
     if not symbols:
         return out
-    from_dt = (
-        datetime.now(timezone.utc) - timedelta(hours=config.NEWS_LOOKBACK_HOURS)
-    ).strftime("%Y-%m-%dT%H:%M:%S")
+    # Default all symbols to neutral/no-news
+    for sym in symbols:
+        out[sym] = {"headline": None, "sentiment": "neutral", "published_at": None}
     try:
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
-            for symbol in symbols:
-                try:
-                    res = await client.get(
-                        NEWS_BASE,
-                        params={
-                            "q": symbol,
-                            "sortBy": "publishedAt",
-                            "from": from_dt,
-                            "pageSize": config.NEWS_TOP_N,
-                            "language": "en",
-                            "apiKey": config.NEWS_API_KEY,
-                        },
-                    )
-                    articles = res.json().get("articles", [])[: config.NEWS_TOP_N]
-                    if not articles:
-                        out[symbol] = {"headline": None, "sentiment": "neutral", "published_at": None}
-                        continue
-                    combined = " ".join(
-                        f"{a.get('title', '')} {a.get('description', '')}" for a in articles
-                    )
-                    out[symbol] = {
-                        "headline": articles[0].get("title"),
-                        "sentiment": _score_sentiment(combined),
-                        "published_at": articles[0].get("publishedAt"),
-                    }
-                except Exception as exc:  # noqa: BLE001
-                    log.error("scan_news failed for %s: %s", symbol, exc)
-                    out[symbol] = {"headline": None, "sentiment": "neutral", "published_at": None}
+            res = await client.get(
+                "https://min-api.cryptocompare.com/data/v2/news/",
+                params={"lang": "EN", "sortOrder": "latest"},
+            )
+            articles = res.json().get("Data", [])[:50]
+            if not articles:
+                return out
+            # Build symbol lookup: strip "USD" suffix for matching
+            # e.g. "BTCUSD" -> "BTC", "ETHUSD" -> "ETH"
+            sym_map = {}
+            for sym in symbols:
+                base = sym.replace("USD", "").upper()
+                sym_map[base] = sym
+            # Also map full names for common cryptos
+            name_map = {
+                "BITCOIN": "BTC", "ETHEREUM": "ETH", "SOLANA": "SOL",
+                "RIPPLE": "XRP", "CARDANO": "ADA", "POLKADOT": "DOT",
+                "AVALANCHE": "AVAX", "CHAINLINK": "LINK", "LITECOIN": "LTC",
+                "MONERO": "XMR", "STELLAR": "XLM", "DOGECOIN": "XDG",
+                "NEAR PROTOCOL": "NEAR", "NEAR": "NEAR", "AAVE": "AAVE",
+                "COMPOUND": "COMP", "ZCASH": "ZEC", "TRON": "TRX",
+                "SUI": "SUI",
+            }
+            for article in articles:
+                title = (article.get("title") or "").upper()
+                categories = (article.get("categories") or "").upper()
+                body_preview = (article.get("body") or "")[:200].upper()
+                published = article.get("published_on")
+                pub_str = None
+                if published:
+                    from datetime import timezone as tz
+                    pub_str = datetime.fromtimestamp(published, tz=tz.utc).isoformat()
+                # Check which symbols this article matches
+                matched_bases = set()
+                # Match by CryptoCompare categories (pipe-separated: "BTC|ETH|MARKET")
+                for cat in categories.split("|"):
+                    cat = cat.strip()
+                    if cat in sym_map:
+                        matched_bases.add(cat)
+                # Match by full name in title
+                for full_name, base in name_map.items():
+                    if full_name in title and base in sym_map:
+                        matched_bases.add(base)
+                # Match by ticker in title (e.g. "BTC" in headline)
+                for base in sym_map:
+                    if base in title:
+                        matched_bases.add(base)
+                # Assign to first unassigned symbol match
+                for base in matched_bases:
+                    full_sym = sym_map[base]
+                    if out[full_sym]["headline"] is None:
+                        combined = f"{article.get('title', '')} {body_preview}"
+                        out[full_sym] = {
+                            "headline": article.get("title"),
+                            "sentiment": _score_sentiment(combined),
+                            "published_at": pub_str,
+                        }
     except Exception as exc:  # noqa: BLE001
-        log.error("scan_news failed: %s", exc)
+        log.error("scan_news (CryptoCompare) failed: %s", exc)
     return out
 
 
