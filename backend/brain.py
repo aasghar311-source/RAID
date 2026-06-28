@@ -633,6 +633,11 @@ ANALYSIS PROCESS:
    - If you cannot find a TP that gives 1.5:1 R:R, skip the trade
    This applies to BOTH immediate trades AND pending signals.
 
+VOLATILE PAIR TP RULE
+For high-volatility pairs (HYPE, TAO, SUI, INJ, WIF, BONK, PEPE, FLOKI, JUP, ONDO, PENDLE, RENDER, APT, TIA, NEAR): use the 2nd or 3rd swing level for TP, not the nearest one.
+These pairs move 3-8% daily — a 1.5% TP wastes their range. Target 2.5%-4.0% TP on volatile pairs.
+SL rules are unchanged — use the structural SL within the 1.5%-2.5% band.
+
 OUTPUT FORMAT (strict):
 Respond with ONE valid JSON object and nothing else — no prose, no markdown fences.
 Use DOUBLE QUOTES (") for every key and every string value. Do NOT use single
@@ -1220,7 +1225,7 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
                 log.info("PENDING: skip %s prob=%.2f < floor %.2f",
                          sig.get("symbol"), prob, config.MIN_CONFIDENCE)
                 continue
-            # Enforce minimum 1.5:1 reward-to-risk ratio (brain prompt says it, code enforces it).
+            # Enforce minimum 1.25:1 reward-to-risk ratio (brain prompt says it, code enforces it).
             _trig = float(sig.get("trigger_price") or 0)
             _sl = float(sig.get("stop_loss") or 0)
             _tp = float(sig.get("take_profit") or 0)
@@ -1232,8 +1237,8 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
                 else:
                     _risk = abs(_sl - _trig)
                     _reward = abs(_trig - _tp)
-                if _risk > 0 and (_reward / _risk) < 1.5:
-                    log.info("PENDING: skip %s R:R=%.2f < 1.5:1 (risk=%.6f reward=%.6f)",
+                if _risk > 0 and (_reward / _risk) < 1.25:
+                    log.info("PENDING: skip %s R:R=%.2f < 1.25:1 (risk=%.6f reward=%.6f)",
                              sig.get("symbol"), _reward / _risk, _risk, _reward)
                     continue
             filtered.append(sig)
