@@ -644,7 +644,7 @@ ANALYSIS PROCESS:
    - If no clear swing level exists, use the nearest EMA (ema50 or ema200).
    - ORDER BOOK: if "ob" shows a large bid wall (>$50K) near SL (longs), place SL
      just below it. For shorts, use ask wall above SL. Supplements swing levels.
-   - SL BAND: code enforces 1% minimum, 2.5% maximum from entry. Your structural SL will be
+   - SL BAND: code enforces 1.5% minimum, 2.5% maximum from entry. Your structural SL will be
      clamped to this range. Set SL at the real structural level — if it falls within 1-2.5%,
      it's used as-is. Tighter than 1% gets widened; wider than 2.5% gets clamped.
    - R:R MUST be at least 1.5:1. TP / SL distance must be >= 1.5 or the code gate rejects it.

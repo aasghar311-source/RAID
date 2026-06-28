@@ -469,7 +469,7 @@ async def _signal_monitor_loop(db_):
                     continue
 
                 # Enforce SL distance band: minimum 1%, maximum 2.5% from entry.
-                min_sl_pct = 0.01  # 1% floor — below this noise clips winners
+                min_sl_pct = 0.015  # 1.5% floor — 1% was too tight, noise clipped 61% of trades
                 max_sl_pct = 0.025  # 2.5% ceiling — beyond this losses are too large
                 if long_like:
                     min_sl = live_price * (1 - min_sl_pct)
