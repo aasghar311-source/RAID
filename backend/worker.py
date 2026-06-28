@@ -493,8 +493,8 @@ async def _signal_monitor_loop(db_):
                 else:
                     _fill_risk = abs(stop_loss - live_price)
                     _fill_reward = abs(live_price - take_profit)
-                if _fill_risk > 0 and (_fill_reward / _fill_risk) < 1.5:
-                    log.info("PENDING: skip %s — fill R:R=%.2f < 1.5:1 (risk=%.6f reward=%.6f)",
+                if _fill_risk > 0 and (_fill_reward / _fill_risk) < 1.1:
+                    log.info("PENDING: skip %s — fill R:R=%.2f < 1.1:1 (risk=%.6f reward=%.6f)",
                              symbol, _fill_reward / _fill_risk, _fill_risk, _fill_reward)
                     _rejected.add(sig["id"])
                     continue
