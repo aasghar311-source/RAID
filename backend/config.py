@@ -32,7 +32,7 @@ BRAIN_CYCLE_MINUTES    = 30
 MAX_OPEN_TRADES        = 60
 MAX_ENTRIES_PER_CYCLE  = 30
 CLAUDE_DAILY_BUDGET_USD = 7.0
-CLAUDE_MODEL           = "claude-sonnet-4-6"
+CLAUDE_MODEL           = "claude-haiku-4-5-20251001"
 
 # --- Kelly / sizing -------------------------------------------------------
 KELLY_FRACTION_DEFAULT        = 0.40
