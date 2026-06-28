@@ -424,35 +424,20 @@ shi/slo=swing highs/lows (top 3), vol=30d volatility, t1h/t30m/t15m=timeframe tr
 news=headline (80ch), nsent=news sentiment, fr=funding rate, ob=order book
 (b=bids a=asks as [[price,usd]]), oi=open interest, fg=fear&greed (0-100), hr=CDT hour.
 
-YOUR MISSION (burned in permanently):
-Floor target:     $155,000 by December 31 2026
-Real target:      $500,000 by December 31 2026
-Supersonic goal:  $1,000,000+ as fast as possible
-$155,000 is the MINIMUM. When you hit it, accelerate.
-You compound by taking only trades with genuine edge. Quality over quantity. A skipped marginal trade protects the dataset; a forced one corrupts it.
+MISSION
+You are RAID's autonomous trading brain. Your job: run the checklist, score every asset honestly, and output ALL signals with probability >= 0.65.
+Do NOT self-filter. Do NOT skip signals based on trajectory status. Do NOT raise your own quality bar above 0.65.
+The system gates (R:R check, SL band, deployment cap, daily loss limit) handle risk management — not you.
+More signals = more data = better system. Every valid signal matters.
 
-SIZING RULES:
-Base: kelly_fraction × 0.25 × equity
-  BEHIND:   ×1.5 multiplier on prob > 0.72 only
-  CRITICAL: ×1.75 multiplier on prob > 0.78 only
-IMPORTANT — probability is an HONEST INPUT, never a dial to unlock size.
-These thresholds describe what an already-true high-conviction read earns;
-they are NOT a reason to report a higher number. Never raise a probability to
-reach a multiplier or to chase the goal. Decide probability FIRST, honestly,
-blind to size. If your honest read is 0.66, it is 0.66 and earns no multiplier —
-that is correct, not a missed opportunity. A trade is never improved by
-inflating its odds. Size follows honesty; honesty never bends to size.
-  ON_TRACK or AHEAD: standard sizing, stay selective
-Volatility scalar: size × (0.15 / realized_vol_30d)
-Correlation penalty: -50% size if 3+ correlated pairs open (BTC/ETH/SOL/XRP group)
-Floor: 0.5% equity minimum per trade
-Cap:   5% equity (7% if BEHIND or CRITICAL)
-
-SIZING BY PROBABILITY:
-0.55–0.64 → 0.5–1.0% equity
-0.65–0.74 → 1.0–2.5% equity
-0.75–0.84 → 2.5–4.0% equity
-0.85–1.00 → 4.0–7.0% equity (if BEHIND or CRITICAL)
+SIZING RULES
+- probability >= 0.80: size_pct = 5.0
+- probability >= 0.75: size_pct = 4.5
+- probability >= 0.70: size_pct = 4.0
+- probability >= 0.65: size_pct = 3.0
+Do NOT adjust sizing based on trajectory status. Do NOT reference kelly_fraction for sizing.
+Correlation penalty is applied code-side.
+Honesty rule: probability scoring must NEVER bend to justify a desired size. Score first, size follows.
 
 FEES (non-negotiable — factor into every single trade):
 Kraken taker fee: 0.16% per side = 0.32% round trip.
@@ -654,7 +639,11 @@ Use DOUBLE QUOTES (") for every key and every string value. Do NOT use single
 quotes — this is JSON, not a Python dict. Use true/false/null (lowercase), not
 Python's True/False/None."""
 
-_USER_PROMPT_TEMPLATE = """TRAJECTORY THIS CYCLE:
+_USER_PROMPT_TEMPLATE = """PAPER TRADING MODE — objective is maximum signal volume for data collection.
+Output ALL valid signals >= 0.65 probability. Do NOT self-filter based on trajectory.
+Do NOT restrict to "high-conviction only." Every 0.65+ signal is a valid trade.
+
+Trajectory reference (informational only — do NOT restrict signal output based on this):
 {trajectory_json}
 
 SIZING STATE:
@@ -949,6 +938,12 @@ async def _execute_brain_trades(
             log.info("BRAIN: %s correlated penalty — 3+ in group — size halved to %.1f%%", symbol, size_pct)
 
         size_usd = (size_pct / 100.0) * equity
+
+        # Paper-phase minimum: 2.5% of equity or $100, whichever is larger
+        min_size = max(100.0, equity * 0.025)
+        if size_usd < min_size:
+            log.info("SIZE FLOOR: $%.2f → $%.2f (min 2.5%% of equity)", size_usd, min_size)
+            size_usd = min_size
 
         # Build a Signal for gate.check_gate (gate is unchanged). sr was resolved above.
         if sr is None:
