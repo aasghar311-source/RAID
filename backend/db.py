@@ -201,6 +201,22 @@ async def get_open_trades_by_market(market: str):
         return []
 
 
+async def get_open_trades_by_symbol(symbol: str):
+    """Return open trades filtered by symbol (status='open' = close_time still null)."""
+    try:
+        res = await (
+            supabase.table("trades")
+            .select("*")
+            .eq("status", "open")
+            .eq("symbol", symbol)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_open_trades_by_symbol failed: %s", exc)
+        return []
+
+
 async def get_closed_trades_last_n(n: int):
     """Return the N most recently closed trades."""
     try:

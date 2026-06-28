@@ -971,6 +971,13 @@ async def _execute_brain_trades(
             log.info("BRAIN: gate reject %s — %s", symbol, gate_result.reason)
             continue
 
+        # Block opposite-direction trades on the same symbol (same-direction stacking OK).
+        sym_open = [t for t in open_trades if t.get("symbol") == symbol]
+        if sym_open and any(t.get("direction") != direction for t in sym_open):
+            log.info("BRAIN: skip %s %s — open %s position exists on %s",
+                     symbol, direction, sym_open[0].get("direction"), symbol)
+            continue
+
         # Build trade record with all columns including new brain v2 fields.
         kelly_fraction = float(sizing_state.get("kelly_fraction") or config.KELLY_FRACTION_DEFAULT)
         trade_record = {

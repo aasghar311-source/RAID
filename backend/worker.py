@@ -499,6 +499,15 @@ async def _signal_monitor_loop(db_):
                     _rejected.add(sig["id"])
                     continue
 
+                # --- Block opposite-direction trades on the same symbol (same-direction stacking OK) ---
+                open_same_symbol = await db_.get_open_trades_by_symbol(symbol)
+                if open_same_symbol:
+                    has_opposite = any(t.get("direction") != direction for t in open_same_symbol)
+                    if has_opposite:
+                        log.info("PENDING: skip %s %s — open %s position exists on %s",
+                                 symbol, direction, open_same_symbol[0].get("direction"), symbol)
+                        continue
+
                 # --- Compute size and open the trade ---
                 equity = await db_.get_equity()
                 sizing_state = await db_.get_sizing_state()
