@@ -624,13 +624,12 @@ ANALYSIS PROCESS:
    - SL BAND: code enforces 1.5% minimum, 2.5% maximum from entry. Your structural SL will be
      clamped to this range. Set SL at the real structural level — if it falls within 1.5-2.5%,
      it's used as-is. Tighter than 1.5% gets widened; wider than 2.5% gets clamped.
-   - R:R MUST be at least 1.5:1. TP / SL distance must be >= 1.5 or the code gate rejects it.
+   - R:R must be at least 1.25:1 (code gate). Aim for 1.5:1 or better — higher R:R means the code gate and fill-side gate (1.1:1) will both pass it easily.
      At 1.5% SL → TP needs 2.25%. At 2% SL → TP needs 3%. At 2.5% SL → TP needs 3.75%.
    Place take_profit at the next structural target:
    - LONGS: TP at the next swing high or resistance above entry
    - SHORTS: TP at the next swing low or support below entry
-   - TP must be at least 1.5x the SL distance (minimum 1.5:1 reward-to-risk)
-   - If you cannot find a TP that gives 1.5:1 R:R, skip the trade
+   - Set TP at least 1.5× the SL distance (ideal). The code gate accepts down to 1.25:1. Below 1.25:1 is rejected.
    This applies to BOTH immediate trades AND pending signals.
 
 VOLATILE PAIR TP RULE

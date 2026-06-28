@@ -431,18 +431,18 @@ async def _signal_monitor_loop(db_):
                     continue
 
                 # --- Sanity re-check: SL on correct side of live price ---
+                # Price already past SL = dead signal. Long dies below SL (live <= sl),
+                # short dies above SL (live >= sl). Expire it so it's never re-checked.
                 if stop_loss > 0:
-                    if long_like and live_price <= stop_loss:
+                    _past_sl = (long_like and live_price <= stop_loss) or (
+                        not long_like and live_price >= stop_loss
+                    )
+                    if _past_sl:
                         log.info(
-                            "PENDING: skip %s -- live %.6f already <= SL %.6f",
+                            "PENDING: auto-expire %s — price past SL (live=%.6f sl=%.6f)",
                             symbol, live_price, stop_loss,
                         )
-                        continue
-                    if not long_like and live_price >= stop_loss:
-                        log.info(
-                            "PENDING: skip %s -- live %.6f already >= SL %.6f",
-                            symbol, live_price, stop_loss,
-                        )
+                        await db_.update_signal_status(sig["id"], "expired")
                         continue
 
                 # --- Gate check (same path as immediate entries) ---

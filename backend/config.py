@@ -66,7 +66,7 @@ OPTIONS_ENABLED    = False
 COMMODITIES_ENABLED = False
 
 PENDING_SIGNALS_ENABLED = False
-PENDING_SIGNAL_EXPIRY_MIN = 30
+PENDING_SIGNAL_EXPIRY_MIN = 20
 
 # --- Scan / exit cadence --------------------------------------------------
 LOOP_SLEEP_SECONDS    = 1     # exit monitor always runs at 1-second resolution
@@ -103,8 +103,8 @@ EOD_CLOSE_HOUR = 16
 EOD_CLOSE_TZ   = "America/New_York"
 
 # --- Claude cost constants ------------------------------------------------
-CLAUDE_INPUT_COST_PER_TOKEN  = 0.000003   # $3.00 / 1M (claude-sonnet-4-6)
-CLAUDE_OUTPUT_COST_PER_TOKEN = 0.000015   # $15.00 / 1M
+CLAUDE_INPUT_COST_PER_TOKEN  = 0.000001   # $1.00 / 1M (claude-haiku-4-5)
+CLAUDE_OUTPUT_COST_PER_TOKEN = 0.000005   # $5.00 / 1M (claude-haiku-4-5)
 
 # --- Alert threshold (budget guard for Resend alert) ----------------------
 CLAUDE_BUDGET_ALERT_AT = 6.0   # alert when spend exceeds $6 of $7
