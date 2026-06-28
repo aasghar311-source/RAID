@@ -227,11 +227,17 @@ async def scan_kraken():
                     continue
 
             # Keep only pairs above the USD-volume floor, highest first, then cap.
-            liquid = sorted(
-                (a for a in candidates if volumes.get(a, 0.0) >= config.MIN_24H_USD_VOLUME),
+            # Always include priority pairs (volatile/meme coins — scanned regardless of volume).
+            priority = set(getattr(config, "PRIORITY_PAIRS", []))
+            priority_in = [a for a in candidates if a in priority]
+            # Fill remaining slots with top volume-sorted non-priority pairs.
+            volume_pairs = sorted(
+                (a for a in candidates if volumes.get(a, 0.0) >= config.MIN_24H_USD_VOLUME and a not in priority),
                 key=lambda a: volumes.get(a, 0.0),
                 reverse=True,
             )[: config.KRAKEN_MAX_PAIRS]
+            liquid = list(dict.fromkeys(priority_in + volume_pairs))  # dedupe, priority first
+            log.info("SCAN: %d pairs (%d priority, %d volume)", len(liquid), len(priority_in), len(volume_pairs))
             if not liquid:
                 log.warning(
                     "No Kraken pairs above $%.0f 24h volume", config.MIN_24H_USD_VOLUME

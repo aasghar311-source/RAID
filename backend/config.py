@@ -112,6 +112,14 @@ CLAUDE_BUDGET_ALERT_AT = 6.0   # alert when spend exceeds $6 of $7
 # --- Scanner tuning -------------------------------------------------------
 KRAKEN_OHLC_INTERVAL  = 5        # minutes per candle
 KRAKEN_MAX_PAIRS      = 25       # top N by volume
+PRIORITY_PAIRS = [
+    # Tier 1 — volatile with liquidity (always scanned regardless of volume ranking)
+    "HYPEUSD", "TAOUSD", "SUIUSD", "NEARUSD",
+    "INJUSD", "RENDERUSD", "APTUSD", "TIAUSD",
+    # Tier 2 — high volatility meme/momentum
+    "PEPEUSD", "WIFUSD", "BONKUSD", "FLOKIUSD",
+    "JUPUSD", "ONDOUSD", "PENDLEUSD",
+]
 OHLCV_CANDLES         = 300      # candles per pair fetched
 KRAKEN_QUOTES         = ("ZUSD", "USD")
 MIN_24H_USD_VOLUME    = 1_000_000
