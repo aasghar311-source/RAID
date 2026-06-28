@@ -644,6 +644,9 @@ ANALYSIS PROCESS:
    - If no clear swing level exists, use the nearest EMA (ema50 or ema200).
    - ORDER BOOK: if "ob" shows a large bid wall (>$50K) near SL (longs), place SL
      just below it. For shorts, use ask wall above SL. Supplements swing levels.
+   - MINIMUM SL distance: 2% from entry (code-enforced — your SL WILL be widened to 2% if tighter).
+     Since SL is at least 2%, your TP MUST be at least 3% to pass the 1.5:1 R:R code gate.
+     If the nearest structural TP is closer than 3%, SKIP the trade — it will be rejected anyway.
    - Maximum SL distance: 4% from entry. Beyond that, skip the trade.
    Place take_profit at the next structural target:
    - LONGS: TP at the next swing high or resistance above entry
