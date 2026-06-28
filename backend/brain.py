@@ -538,58 +538,50 @@ ANALYSIS PROCESS:
    conservative. Multi-timeframe alignment is your strongest structural edge —
    use it to filter marginal setups, not just to confirm good ones.
 
-5. PROBABILITY SCORING — BUILD FROM EVIDENCE, DO NOT GUESS:
-   Start every setup at 0.50 (coin flip). Add or subtract based on SPECIFIC evidence.
-   Your final probability is the SUM of these adjustments, not a gut feel.
+5. PROBABILITY SCORING — CHECKLIST (follow these steps EXACTLY for every asset):
 
-   ADDITIVE FACTORS (each adds to probability):
-   +0.05  Trend alignment (price clearly above/below key EMAs in your direction)
-   +0.05  Multi-timeframe confirmation (2+ of 15m/30m/1h agree with your direction)
-   +0.05  Volume confirms (current volume above 30-period average, supporting move)
-   +0.05  RSI supports (not overbought for longs >70, not oversold for shorts <30)
-   +0.05  Key level proximity (entry near strong support/resistance with room to TP)
-   +0.05  Clean structure (clear swing levels for SL/TP, not choppy noise)
-   +0.05  Scorecard supports (your win rate on this direction+regime combo is >50%)
-   +0.03  Strong momentum (MACD crossover or acceleration in your direction)
-   +0.03  News catalyst (headline directly supports your trade direction)
-   +0.02  Low correlation (fewer than 2 open trades in this asset's correlated group)
-   +0.05  Funding rate aligns: check "fr". Positive (>0.0001) = longs crowded = short edge. Negative (<-0.0001) = shorts crowded = long edge. Near zero = no factor.
-   +0.05  Order book support: check "ob". Large bid wall (>$50K) near SL for longs, or ask wall near SL for shorts = liquidity confirms structure. No walls = no factor.
-   +0.03  Open interest confirms: check "oi". High OI + aligned "fr" = strong conviction. Zero/unknown = no factor.
-   +0.03  Fear & Greed contrarian: check "fg" (0-100). Long when fg<25 or short when fg>75 = contrarian edge. 25-75 = no factor.
+   STEP 1 — Check each factor. Answer YES or NO using the market data:
+   Y1: Trend?      Is "px" clearly above key EMAs (e20/e50/e200) for longs, below for shorts?
+   Y2: Multi-TF?   Do 2+ of "t1h"/"t30m"/"t15m" agree with your direction?
+   Y3: Volume?     Is "vol" above average for this asset?
+   Y4: RSI OK?     Is "rsi" NOT overbought (>70 for longs), NOT oversold (<30 for shorts)?
+   Y5: Structure?  Are "shi"/"slo" clear enough for SL/TP placement?
+   Y6: Funding?    Does "fr" support you? Positive >0.0001 = short edge. Negative <-0.0001 = long edge.
+   Y7: OrderBook?  Does "ob" show a wall >$50K behind your SL level?
+   Y8: News?       Does "nsent" support your direction (bullish for longs, bearish for shorts)?
+   Y9: OI?         Is "oi" high AND "fr" aligned with your direction?
+   Y10: FearGreed? Is "fg" contrarian? Long when fg<25 OR short when fg>75?
+   Y11: Scorecard? Is your win rate >50% on this direction+regime combo?
+   Y12: Momentum?  Does "macd" show crossover or acceleration in your direction?
 
-   SUBTRACTIVE FACTORS (each reduces probability):
-   -0.10  Scorecard warns (your win rate on this direction+regime combo is <35%)
-   -0.05  Counter-trend (going against the dominant 1h timeframe)
-   -0.05  Timeframe disagreement (in trending regime — exempt in VOLATILE)
-   -0.05  Extended/exhausted move (RSI >75 for longs or <25 for shorts)
-   -0.05  Wide spread or thin volume (poor fills expected)
-   -0.03  Approaching key level against you (resistance above for longs)
-   -0.03  High correlation (3+ open trades in same asset group)
-   -0.02  Recent loss on this symbol (lost on this symbol in last 2 cycles)
-   -0.05  Funding rate opposes: longing when fr>0.0002 or shorting when fr<-0.0002. Crowded = reversion risk.
-   -0.03  Fear & Greed crowded: longing when fg>75 or shorting when fg<25 = with the crowd at extremes. 25-75 = no penalty.
+   STEP 2 — Check each PENALTY. Answer YES or NO:
+   P1: Counter-trend?   Going against dominant "t1h"?
+   P2: RSI extreme?     "rsi" >75 for longs or <25 for shorts?
+   P3: Funding opposes?  Longing when "fr">0.0002 or shorting when "fr"<-0.0002?
+   P4: FG crowded?      Longing when "fg">75 or shorting when "fg"<25?
+   P5: Scorecard bad?   Win rate <35%? WARNING: this counts as TWO penalties.
+   P6: Correlated?      3+ open trades in same group (BTC/ETH/SOL/XRP)?
 
-   MAXIMUM POSSIBLE: 0.50 + all additive = ~1.04 (everything aligns, very rare)
-   MINIMUM REALISTIC: 0.50 + trend only = 0.55 (skip — below floor)
+   STEP 3 — Calculate probability (just count and multiply):
+   probability = 0.50 + (YES_count x 0.05) - (PENALTY_count x 0.05)
+   Remember: P5 = two penalties (-0.10 total, not -0.05).
 
-   FACTOR COUNT GATES (hard rules):
-   - Fewer than 3 additive factors → probability CANNOT exceed 0.65 → likely skip
-   - Fewer than 5 additive factors → probability CANNOT exceed 0.75
-   - 6+ additive factors with zero subtractive → 0.80+ is justified
-   - ALL factors align (exceptional, maybe 1-2 per day) → 0.85-0.93
+   LOOKUP TABLE (use this to verify your math):
+   YES=3  P=0 -> 0.65     YES=6  P=0 -> 0.80     YES=4  P=1 -> 0.65
+   YES=4  P=0 -> 0.70     YES=7  P=0 -> 0.85     YES=5  P=1 -> 0.70
+   YES=5  P=0 -> 0.75     YES=8  P=0 -> 0.90     YES=6  P=2 -> 0.70
 
-   MANDATORY REASONING FORMAT — for EVERY trade and pending signal, show the math:
-   Use compact format: "T+MTF+V+RSI+struct=0.75" (first letter of each factor).
-   Only spell out if a factor is unusual or needs explanation.
+   Below 0.65 = SKIP (do not output). Below 3 YES factors = SKIP.
 
-   If you cannot show the factor math, you cannot assign the probability.
+   STEP 4 — Write reasoning for EVERY signal (MANDATORY):
+   Format: "Y:T+MTF+V+RSI+S+FR=6 P:0 -> 0.80"
+   Or: "Y:T+MTF+V=3 P:CT+FG=2 -> 0.55 SKIP"
+   Show which factors are YES, which penalties apply, the counts, and the result.
 
-   ANTI-CLUSTERING RULE: if all your signals in one cycle are within 0.03 of each
-   other, you are NOT differentiating. Different setups have different evidence —
-   a 5-factor setup and a 3-factor setup CANNOT have the same probability. Spread
-   your outputs. Some at 0.65 (barely pass), some at 0.70-0.75 (solid), and
-   occasionally one at 0.80+ (exceptional). Many skipped below 0.65.
+   TRIGGER PRICE RULE: signals expire in 30 minutes. Crypto moves 0.1-0.4% in 30 min.
+   Conviction triggers: within 0.1-0.3% of current price (pullback entries).
+   Watchlist triggers: within 0.2-0.5% of current price (breakout entries).
+   NEVER set triggers further than 0.5% — they will expire unfilled and waste a signal slot.
 
 6. PENDING SIGNAL GENERATION (always produce alongside immediate trades):
    In ADDITION to your "trades" array, output a "pending_signals" array with
