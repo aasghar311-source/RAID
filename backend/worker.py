@@ -468,28 +468,33 @@ async def _signal_monitor_loop(db_):
                     _rejected.add(sig["id"])
                     continue
 
-                # Enforce minimum SL distance (crypto noise floor).
-                min_sl_pct = 0.02  # 2% minimum from entry
+                # Enforce SL distance band: minimum 1%, maximum 2.5% from entry.
+                min_sl_pct = 0.01  # 1% floor — below this noise clips winners
+                max_sl_pct = 0.025  # 2.5% ceiling — beyond this losses are too large
                 if long_like:
                     min_sl = live_price * (1 - min_sl_pct)
+                    max_sl = live_price * (1 - max_sl_pct)
                     if stop_loss > min_sl:
-                        stop_loss = min_sl
+                        stop_loss = min_sl  # too tight, widen to 1%
+                    elif stop_loss < max_sl:
+                        stop_loss = max_sl  # too wide, clamp to 2.5%
                 elif not long_like:
                     min_sl = live_price * (1 + min_sl_pct)
+                    max_sl = live_price * (1 + max_sl_pct)
                     if stop_loss < min_sl:
-                        stop_loss = min_sl
+                        stop_loss = min_sl  # too tight, widen to 1%
+                    elif stop_loss > max_sl:
+                        stop_loss = max_sl  # too wide, clamp to 2.5%
 
-                # Post-enforcement R:R check: min SL may have widened the stop,
-                # breaking the 1.5:1 R:R that the brain-side gate approved.
-                # Reject the fill if the ACTUAL enforced levels fail R:R.
+                # Fill-time R:R check: verify actual R:R passes 1.5:1.
                 if long_like:
                     _fill_risk = abs(live_price - stop_loss)
                     _fill_reward = abs(take_profit - live_price)
                 else:
                     _fill_risk = abs(stop_loss - live_price)
                     _fill_reward = abs(live_price - take_profit)
-                if _fill_risk > 0 and (_fill_reward / _fill_risk) < 1.3:
-                    log.info("PENDING: skip %s fill R:R=%.2f < 1.3:1 after min-SL widening (risk=%.6f reward=%.6f)",
+                if _fill_risk > 0 and (_fill_reward / _fill_risk) < 1.5:
+                    log.info("PENDING: skip %s — fill R:R=%.2f < 1.5:1 (risk=%.6f reward=%.6f)",
                              symbol, _fill_reward / _fill_risk, _fill_risk, _fill_reward)
                     _rejected.add(sig["id"])
                     continue
