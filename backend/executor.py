@@ -307,6 +307,24 @@ async def monitor_positions(db):
             sl = trade.get("sl")
             hit = _sl_tp_hit(direction, price, sl, tp)
             if hit:
+                # TP extension: when TP is first hit with trail active, lock profit
+                # near old TP and extend target — let winners run beyond original TP.
+                if hit == "take_profit" and trade.get("trail_active"):
+                    tp_dist_pct = abs(tp - entry) / entry if entry > 0 else 0
+                    if tp_dist_pct < 0.04:  # < 4% = original TP, not already extended
+                        if direction in ("long", "yes"):
+                            new_sl = max(tp * (1 - 0.003), trade.get("sl") or 0)
+                            new_tp = entry + (tp - entry) * 3
+                        else:
+                            new_sl = min(tp * (1 + 0.003), trade.get("sl") or tp * (1 + 0.003))
+                            new_tp = entry - (entry - tp) * 3
+                        await _persist_sl(db, trade["id"], new_sl)
+                        await db.update_trade_fields(trade["id"], {"tp": new_tp})
+                        trade["sl"] = new_sl
+                        trade["tp"] = new_tp
+                        log.info("TP EXTEND %s %s — SL→%.6f (near old TP %.6f), new TP→%.6f",
+                                 trade["market"], trade["symbol"], new_sl, tp, new_tp)
+                        continue
                 # Distinguish trailing_stop from original stop_loss.
                 close_reason = "trailing_stop" if trade.get("trail_active") and hit == "stop_loss" else hit
                 pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
