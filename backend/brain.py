@@ -37,6 +37,25 @@ _consecutive_missed_cycles: int = 0
 _last_trajectory_status = "ON_TRACK"  # surfaced to the worker health endpoint
 
 
+def _extract_prob_from_reasoning(reasoning: str) -> float:
+    """Recover probability from mandatory format 'Y:...=N P:...=M -> 0.XX' or '→ 0.XX'"""
+    if not reasoning:
+        return 0.0
+    import re
+    match = re.search(r'(?:→|->)\s*(0\.\d+)', reasoning)
+    return float(match.group(1)) if match else 0.0
+
+
+def _widen_tp(entry: float, sl: float, direction: str, target_rr: float = 1.5) -> float:
+    """Calculate minimum TP to achieve target R:R ratio."""
+    risk = abs(entry - sl)
+    reward_needed = risk * target_rr
+    if direction in ("long", "yes"):
+        return entry + reward_needed
+    else:
+        return entry - reward_needed
+
+
 # ── Backward-compat dataclass (used by executor._claude_override) ──────────
 
 @dataclass
@@ -873,6 +892,12 @@ async def _execute_brain_trades(
         symbol = trade_spec["symbol"]
         direction = trade_spec["direction"]
         probability = float(trade_spec.get("probability", 0))
+        if probability == 0.0:
+            _reasoning = trade_spec.get("reasoning") or trade_spec.get("rationale") or ""
+            recovered = _extract_prob_from_reasoning(_reasoning)
+            if recovered > 0:
+                probability = recovered
+                log.info("BRAIN: recovered prob=%.2f from reasoning for %s", probability, trade_spec.get("symbol", "?"))
         size_pct = float(trade_spec.get("size_pct", 0))
         claude_entry = float(trade_spec.get("entry_price", 0))
         stop_loss = float(trade_spec.get("stop_loss", 0))
@@ -924,6 +949,15 @@ async def _execute_brain_trades(
         if probability < config.MIN_CONFIDENCE:
             log.info("BRAIN: skip %s — prob %.2f below floor %.2f", symbol, probability, config.MIN_CONFIDENCE)
             continue
+
+        # Ensure R:R >= 1.25 by widening TP instead of rejecting (matches pending path).
+        if take_profit > 0 and stop_loss > 0 and entry_price > 0:
+            _ir = abs(entry_price - stop_loss)
+            _iw = abs(take_profit - entry_price)
+            if _ir > 0 and (_iw / _ir) < 1.25:
+                _ntp = _widen_tp(entry_price, stop_loss, direction, target_rr=1.5)
+                log.info("BRAIN: widen TP %s R:R=%.2f→1.50 (tp %.6f→%.6f)", symbol, _iw / _ir, take_profit, _ntp)
+                take_profit = _ntp
 
         # Validate size bounds.
         max_pct = config.MAX_TRADE_SIZE_PCT_BEHIND if trajectory_status in ("BEHIND", "CRITICAL") else config.MAX_TRADE_SIZE_PCT
@@ -1227,11 +1261,18 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         for sig in pending:
             sig["regime"] = regime_by_asset.get(sig.get("symbol"), "UNKNOWN")
             prob = float(sig.get("probability") or 0)
+            if prob == 0.0:
+                _reasoning = sig.get("reasoning") or sig.get("rationale") or ""
+                recovered = _extract_prob_from_reasoning(_reasoning)
+                if recovered > 0:
+                    prob = recovered
+                    sig["probability"] = prob
+                    log.info("PENDING: recovered prob=%.2f from reasoning for %s", prob, sig.get("symbol", "?"))
             if prob < config.MIN_CONFIDENCE:
                 log.info("PENDING: skip %s prob=%.2f < floor %.2f",
                          sig.get("symbol"), prob, config.MIN_CONFIDENCE)
                 continue
-            # Enforce minimum 1.25:1 reward-to-risk ratio (brain prompt says it, code enforces it).
+            # Enforce minimum 1.25:1 reward-to-risk ratio — widen TP instead of rejecting.
             _trig = float(sig.get("trigger_price") or 0)
             _sl = float(sig.get("stop_loss") or 0)
             _tp = float(sig.get("take_profit") or 0)
@@ -1244,10 +1285,22 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
                     _risk = abs(_sl - _trig)
                     _reward = abs(_trig - _tp)
                 if _risk > 0 and (_reward / _risk) < 1.25:
-                    log.info("PENDING: skip %s R:R=%.2f < 1.25:1 (risk=%.6f reward=%.6f)",
-                             sig.get("symbol"), _reward / _risk, _risk, _reward)
-                    continue
+                    _new_tp = _widen_tp(_trig, _sl, _dir, target_rr=1.5)
+                    log.info("PENDING: widen TP %s R:R=%.2f→1.50 (tp %.6f→%.6f)",
+                             sig.get("symbol", "?"), _reward / _risk, _tp, _new_tp)
+                    sig["take_profit"] = _new_tp
+                    _tp = _new_tp
             filtered.append(sig)
+        # Validate symbols against scanned pairs (drop Haiku typos like RENDERU$D).
+        _valid_symbols = {sr.symbol for sr in scan_results}
+        _validated = []
+        for _s in filtered:
+            if _s.get("symbol") in _valid_symbols:
+                _validated.append(_s)
+            else:
+                log.warning("PENDING: drop %s — symbol not in scanned pairs (possible Haiku typo)",
+                            _s.get("symbol", "?"))
+        filtered = _validated
         await db.save_pending_signals(filtered)
         entries = 0
         log.info("BRAIN: pending mode ON -- saved %d signals (%d filtered), skipped immediate", len(filtered), len(pending) - len(filtered))

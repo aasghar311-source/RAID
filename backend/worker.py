@@ -486,7 +486,7 @@ async def _signal_monitor_loop(db_):
                     elif stop_loss > max_sl:
                         stop_loss = max_sl  # too wide, clamp to 2.5%
 
-                # Fill-time R:R check: verify actual R:R passes 1.5:1.
+                # Fill-time R:R check: widen TP to 1.25:1 instead of rejecting.
                 if long_like:
                     _fill_risk = abs(live_price - stop_loss)
                     _fill_reward = abs(take_profit - live_price)
@@ -494,10 +494,10 @@ async def _signal_monitor_loop(db_):
                     _fill_risk = abs(stop_loss - live_price)
                     _fill_reward = abs(live_price - take_profit)
                 if _fill_risk > 0 and (_fill_reward / _fill_risk) < 1.1:
-                    log.info("PENDING: skip %s — fill R:R=%.2f < 1.1:1 (risk=%.6f reward=%.6f)",
-                             symbol, _fill_reward / _fill_risk, _fill_risk, _fill_reward)
-                    _rejected.add(sig["id"])
-                    continue
+                    _old_tp = take_profit
+                    take_profit = brain._widen_tp(live_price, stop_loss, direction, target_rr=1.25)
+                    log.info("PENDING: widen TP %s — fill R:R=%.2f→1.25 (tp %.6f→%.6f)",
+                             symbol, _fill_reward / _fill_risk, _old_tp, take_profit)
 
                 # --- Block opposite-direction trades on the same symbol (same-direction stacking OK) ---
                 open_same_symbol = await db_.get_open_trades_by_symbol(symbol)
