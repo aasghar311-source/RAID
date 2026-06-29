@@ -96,15 +96,15 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             if gain < config.TRAIL_TRIGGER_PCT:
                 return
             # Progressive trail: lock more profit as gain grows.
-            # 1.0-1.5%: lock 50% → room for pullback on fresh moves
-            # 1.5-2.0%: lock 70% → tightening on real profit
-            # 2.0%+:    lock 80% → aggressive near TP territory
+            # 0.75-1.5%: lock 70% → still room for pullback on fresh moves
+            # 1.5-2.0%:  lock 85% → tightening hard on real profit
+            # 2.0%+:     lock 90% → aggressive near TP territory
             if gain >= 0.02:
-                lock_pct = 0.80
+                lock_pct = 0.90
             elif gain >= 0.015:
-                lock_pct = 0.70
+                lock_pct = 0.85
             else:
-                lock_pct = 0.50
+                lock_pct = 0.70
             new_sl = entry * (1 + gain * lock_pct)
             # Fee-protected floor: never trail to a level that nets a loss after fees.
             fee_floor = entry * 1.004
@@ -119,11 +119,11 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
                 return
             # Progressive trail: lock more profit as gain grows.
             if gain >= 0.02:
-                lock_pct = 0.80
+                lock_pct = 0.90
             elif gain >= 0.015:
-                lock_pct = 0.70
+                lock_pct = 0.85
             else:
-                lock_pct = 0.50
+                lock_pct = 0.70
             new_sl = entry * (1 - gain * lock_pct)
             # Fee-protected floor: never trail to a level that nets a loss after fees.
             fee_floor = entry * 0.996
