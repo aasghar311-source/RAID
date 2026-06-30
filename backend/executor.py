@@ -307,24 +307,11 @@ async def monitor_positions(db):
             sl = trade.get("sl")
             hit = _sl_tp_hit(direction, price, sl, tp)
             if hit:
-                # TP extension: when TP is first hit with trail active, lock profit
-                # near old TP and extend target — let winners run beyond original TP.
+                # TP EXTENSION: disabled — capped at 2.5%. Extending to 7.5-15% never
+                # got hit (0/314 TPs reached historically); take the TP when it fills.
                 if hit == "take_profit" and trade.get("trail_active"):
-                    tp_dist_pct = abs(tp - entry) / entry if entry > 0 else 0
-                    if tp_dist_pct < 0.04:  # < 4% = original TP, not already extended
-                        if direction in ("long", "yes"):
-                            new_sl = max(tp * (1 - 0.003), trade.get("sl") or 0)
-                            new_tp = entry + (tp - entry) * 3
-                        else:
-                            new_sl = min(tp * (1 + 0.003), trade.get("sl") or tp * (1 + 0.003))
-                            new_tp = entry - (entry - tp) * 3
-                        await _persist_sl(db, trade["id"], new_sl)
-                        await db.update_trade_fields(trade["id"], {"tp": new_tp})
-                        trade["sl"] = new_sl
-                        trade["tp"] = new_tp
-                        log.info("TP EXTEND %s %s — SL→%.6f (near old TP %.6f), new TP→%.6f",
-                                 trade["market"], trade["symbol"], new_sl, tp, new_tp)
-                        continue
+                    log.info("TP EXTENSION: disabled — capped at 2.5%% (%s %s)",
+                             trade["market"], trade["symbol"])
                 # Distinguish trailing_stop from original stop_loss.
                 close_reason = "trailing_stop" if trade.get("trail_active") and hit == "stop_loss" else hit
                 pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
@@ -333,10 +320,10 @@ async def monitor_positions(db):
                 continue
 
             # MAT (Matured Exit) system — time-based checkpoints.
-            # 0-4h: normal trading (SL/trail/TP above handle it)
-            # 4h+:  close if profit >= 0.75% (matured_profit)
-            # 4-6h: close if profit >= 0.35% (breakeven_exit — covers fees)
-            # 6h:   close regardless (max_hold_exit)
+            # 0-2h: normal trading (SL/trail/TP above handle it)
+            # 2h+:  close if profit >= 0.5% (matured_profit)
+            # 2-3h: close if profit >= 0.25% (breakeven_exit — covers fees)
+            # 3h:   close regardless (max_hold_exit)
             if config.MAX_HOLD_EXIT_ENABLED and trade.get("open_time"):
                 try:
                     opened = datetime.fromisoformat(str(trade["open_time"]).replace("Z", "+00:00"))
@@ -345,7 +332,7 @@ async def monitor_positions(db):
                     pnl_now = compute_pnl(direction, entry, price, size_usd)
                     profit_pct = pnl_now / size_usd if size_usd > 0 else 0
 
-                    # 6h hard ceiling — close no matter what
+                    # 3h hard ceiling — close no matter what
                     if hours_open >= config.MAX_HOLD_HOURS:
                         await db.close_trade(trade["id"], price, pnl_now, "max_hold_exit")
                         log.info(
@@ -354,7 +341,7 @@ async def monitor_positions(db):
                         )
                         continue
 
-                    # 4h+ checkpoint — take matured profit
+                    # 2h+ checkpoint — take matured profit
                     if hours_open >= config.MAT_CHECKPOINT_HOURS:
                         if profit_pct >= config.MAT_PROFIT_PCT:
                             await db.close_trade(trade["id"], price, pnl_now, "matured_profit")
@@ -364,7 +351,7 @@ async def monitor_positions(db):
                             )
                             continue
 
-                        # 4-6h window — take breakeven (covers fees)
+                        # 2-3h window — take breakeven (covers fees)
                         if profit_pct >= config.MAT_BREAKEVEN_PCT:
                             await db.close_trade(trade["id"], price, pnl_now, "breakeven_exit")
                             log.info(

@@ -414,6 +414,13 @@ async def _signal_monitor_loop(db_):
                 triggered = False
                 long_like = direction in ("long", "yes")
 
+                # Direction gate: shorts only in extreme fear (F&G < 25).
+                if scanner.LAST_FEAR_GREED < 25 and long_like:
+                    log.info("PENDING: skip %s long — F&G=%d < 25 (shorts only in extreme fear)",
+                             symbol, scanner.LAST_FEAR_GREED)
+                    _rejected.add(sig["id"])
+                    continue
+
                 if trigger_type == "limit":
                     # Limit: price returned TO trigger (buy low / sell high).
                     if long_like and live_price <= trigger_price:
@@ -468,23 +475,23 @@ async def _signal_monitor_loop(db_):
                     _rejected.add(sig["id"])
                     continue
 
-                # Enforce SL distance band: minimum 1%, maximum 2.5% from entry.
+                # Enforce SL distance band: minimum 1.5%, maximum 1.75% from entry.
                 min_sl_pct = 0.015  # 1.5% floor — 1% was too tight, noise clipped 61% of trades
-                max_sl_pct = 0.025  # 2.5% ceiling — beyond this losses are too large
+                max_sl_pct = config.MAX_SL_DISTANCE_PCT  # 1.75% ceiling — tightened from 2.5%
                 if long_like:
                     min_sl = live_price * (1 - min_sl_pct)
                     max_sl = live_price * (1 - max_sl_pct)
                     if stop_loss > min_sl:
                         stop_loss = min_sl  # too tight, widen to 1%
                     elif stop_loss < max_sl:
-                        stop_loss = max_sl  # too wide, clamp to 2.5%
+                        stop_loss = max_sl  # too wide, clamp to 1.75%
                 elif not long_like:
                     min_sl = live_price * (1 + min_sl_pct)
                     max_sl = live_price * (1 + max_sl_pct)
                     if stop_loss < min_sl:
                         stop_loss = min_sl  # too tight, widen to 1%
                     elif stop_loss > max_sl:
-                        stop_loss = max_sl  # too wide, clamp to 2.5%
+                        stop_loss = max_sl  # too wide, clamp to 1.75%
 
                 # Fill-time R:R check: widen TP to 1.25:1 instead of rejecting.
                 if long_like:

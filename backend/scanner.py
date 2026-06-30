@@ -152,16 +152,23 @@ async def _fetch_order_book(client, pair: str) -> dict:
     return {}
 
 
+# Last-known global Fear & Greed index — cached so the worker (fill side) can read
+# the current value without an extra API call. Updated each brain cycle by fetch_fear_greed().
+LAST_FEAR_GREED = 50
+
+
 async def fetch_fear_greed() -> int:
     """Fetch Crypto Fear & Greed Index from Alternative.me (free, no key needed).
     Returns value 0-100 (0=extreme fear, 100=extreme greed), or 50 (neutral) on error.
     One call per brain cycle — global market sentiment, not per-symbol."""
+    global LAST_FEAR_GREED
     try:
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
             res = await client.get("https://api.alternative.me/fng/")
             data = res.json().get("data", [])
             if data:
                 val = int(data[0].get("value", 50))
+                LAST_FEAR_GREED = val
                 log.info("FEAR_GREED: index=%d", val)
                 return val
     except Exception as exc:  # noqa: BLE001
