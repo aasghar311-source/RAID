@@ -77,13 +77,13 @@ MACRO_PAUSE_MINUTES_BEFORE = 30
 MACRO_RESUME_MINUTES_AFTER = 15
 
 # --- SL/TP (executor uses these for adverse-move overrides) ---------------
-STOP_LOSS_PCT      = 0.02
+STOP_LOSS_PCT      = 0.01     # 1.0% fixed SL — backtester Config I
 TAKE_PROFIT_PCT    = 0.04
-MAX_SL_DISTANCE_PCT = 0.0175  # 1.75% max SL distance — tightened from 2.5% (avg loss -$1.90 too large)
+MAX_SL_DISTANCE_PCT = 0.01    # 1.0% fixed SL — backtester Config I (floor==ceiling, no band)
 MAX_TP_DISTANCE_PCT = 0.025   # 2.5% max TP distance — was avg 4.62%, 0/314 hit
 KALSHI_SL_PCT      = 0.50
 KALSHI_TP_PRICE    = 0.95
-TRAIL_TRIGGER_PCT  = 0.0075  # 0.75% — aggressive: start locking profit earlier (was 1.0%)
+TRAIL_TRIGGER_PCT  = 999.0   # Trail disabled — pure SL/TP exit per backtester
 TRAIL_STEP_PCT     = 0.005   # 0.5% — room for normal crypto pullbacks (was 0.3%, too tight)
 ADVERSE_MOVE_PCT   = 0.04   # override fires only on violent moves (2x stop), not at stop level
 AI_OVERRIDE_EXIT_ENABLED = True   # set False to fully disable discretionary exits

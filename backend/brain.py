@@ -448,8 +448,6 @@ You are RAID's autonomous trading brain. Your job: run the checklist, score ever
 Do NOT self-filter. Do NOT skip signals based on trajectory status. Do NOT raise your own quality bar above 0.65.
 The system gates (R:R check, SL band, deployment cap, daily loss limit) handle risk management — not you.
 More signals = more data = better system. Every valid signal matters.
-DIRECTION RULE: When Fear & Greed index < 25 (extreme fear), output SHORT signals only.
-Do not output long signals during extreme fear — the code gate will block them.
 
 SIZING RULES
 - probability >= 0.80: size_pct = 5.0
@@ -642,11 +640,10 @@ ANALYSIS PROCESS:
    - If no clear swing level exists, use the nearest EMA (ema50 or ema200).
    - ORDER BOOK: if "ob" shows a large bid wall (>$50K) near SL (longs), place SL
      just below it. For shorts, use ask wall above SL. Supplements swing levels.
-   - SL BAND: code enforces 1.5% minimum, 1.75% maximum from entry. Your structural SL will be
-     clamped to this range. Set SL at the real structural level — if it falls within 1.5-1.75%,
-     it's used as-is. Tighter than 1.5% gets widened; wider than 1.75% gets clamped.
+   - SL is fixed at 1.0% from entry price. No SL band — every trade uses exactly 1.0% stop loss.
+     The code clamps your SL to 1.0% regardless of the structural level you set.
    - R:R must be at least 1.25:1 (code gate). Aim for 1.5:1 or better — higher R:R means the code gate and fill-side gate (1.1:1) will both pass it easily.
-     At 1.5% SL → TP ~2.25%. At 1.75% SL (max) → TP capped at 2.5% (R:R ~1.43:1). TP is hard-capped at 2.5%.
+     At the fixed 1.0% SL, a 2.5% TP gives R:R 2.5:1. TP is hard-capped at 2.5%.
    Place take_profit at the next structural target:
    - LONGS: TP at the next swing high or resistance above entry
    - SHORTS: TP at the next swing low or support below entry
@@ -656,7 +653,7 @@ ANALYSIS PROCESS:
 VOLATILE PAIR TP RULE
 For high-volatility pairs (HYPE, TAO, SUI, INJ, WIF, BONK, PEPE, FLOKI, JUP, ONDO, PENDLE, RENDER, APT, TIA, NEAR): use the nearest reachable swing level for TP.
 These pairs move 3-8% daily, but TPs beyond 2.5% never get hit (0/314 historically). Target 2.0%-2.5% TP (max 2.5%) — a reachable TP beats a "perfect" one that never fills.
-SL rules are unchanged — use the structural SL within the 1.5%-1.75% band.
+SL is fixed at 1.0% from entry (see above). Focus your structural work on the TP.
 
 OUTPUT FORMAT (strict):
 Respond with ONE valid JSON object and nothing else — no prose, no markdown fences.
@@ -870,8 +867,6 @@ async def _execute_brain_trades(
 
     # Index scan results by symbol for quick lookup.
     scan_by_symbol = {sr.symbol: sr for sr in scan_results}
-    # Cycle-global Fear & Greed (same value across all scan results).
-    _fg_index = next((int(getattr(sr, "fear_greed", 50)) for sr in scan_results), 50)
 
     open_trades = await db.get_open_trades()
     max_open = int(controls.get("max_open_trades") or config.MAX_OPEN_TRADES)
@@ -895,10 +890,6 @@ async def _execute_brain_trades(
 
         symbol = trade_spec["symbol"]
         direction = trade_spec["direction"]
-        # Direction gate: shorts only in extreme fear (F&G < 25).
-        if _fg_index < 25 and direction in ("long", "yes"):
-            log.info("BRAIN: skip %s long — F&G=%d < 25 (shorts only in extreme fear)", symbol, _fg_index)
-            continue
         probability = float(trade_spec.get("probability", 0))
         if probability == 0.0:
             _reasoning = trade_spec.get("reasoning") or trade_spec.get("rationale") or ""
@@ -1277,17 +1268,10 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         # Pending mode: save signals to DB; monitor fires them on triggers.
         pending = brain_json.get("pending_signals") or []
         regime_by_asset = brain_json.get("regime_by_asset") or {}
-        # Cycle-global Fear & Greed (same value across all scan results).
-        _fg_index = next((int(getattr(sr, "fear_greed", 50)) for sr in scan_results), 50)
         # Filter out signals below MIN_CONFIDENCE.
         filtered = []
         for sig in pending:
             sig["regime"] = regime_by_asset.get(sig.get("symbol"), "UNKNOWN")
-            # Direction gate: shorts only in extreme fear (F&G < 25).
-            if _fg_index < 25 and sig.get("direction") in ("long", "yes"):
-                log.info("PENDING: skip %s long — F&G=%d < 25 (shorts only in extreme fear)",
-                         sig.get("symbol", "?"), _fg_index)
-                continue
             prob = float(sig.get("probability") or 0)
             if prob == 0.0:
                 _reasoning = sig.get("reasoning") or sig.get("rationale") or ""

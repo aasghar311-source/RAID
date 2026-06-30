@@ -414,13 +414,6 @@ async def _signal_monitor_loop(db_):
                 triggered = False
                 long_like = direction in ("long", "yes")
 
-                # Direction gate: shorts only in extreme fear (F&G < 25).
-                if scanner.LAST_FEAR_GREED < 25 and long_like:
-                    log.info("PENDING: skip %s long — F&G=%d < 25 (shorts only in extreme fear)",
-                             symbol, scanner.LAST_FEAR_GREED)
-                    _rejected.add(sig["id"])
-                    continue
-
                 if trigger_type == "limit":
                     # Limit: price returned TO trigger (buy low / sell high).
                     if long_like and live_price <= trigger_price:
@@ -475,9 +468,9 @@ async def _signal_monitor_loop(db_):
                     _rejected.add(sig["id"])
                     continue
 
-                # Enforce SL distance band: minimum 1.5%, maximum 1.75% from entry.
-                min_sl_pct = 0.015  # 1.5% floor — 1% was too tight, noise clipped 61% of trades
-                max_sl_pct = config.MAX_SL_DISTANCE_PCT  # 1.75% ceiling — tightened from 2.5%
+                # Enforce fixed 1.0% SL (floor == ceiling, no band) — backtester Config I.
+                min_sl_pct = 0.01  # 1.0% fixed SL — backtester Config I
+                max_sl_pct = config.MAX_SL_DISTANCE_PCT  # reads 0.01 — fixed 1.0% (floor==ceiling)
                 if long_like:
                     min_sl = live_price * (1 - min_sl_pct)
                     max_sl = live_price * (1 - max_sl_pct)

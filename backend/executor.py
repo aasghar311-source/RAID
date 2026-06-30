@@ -82,6 +82,9 @@ def compute_pnl(direction: str, entry: float, exit_price: float, size_usd: float
 
 async def update_trailing_stop(trade: dict, current_price: float, db):
     """Ratchet a trade's stop toward profit once it moves in favor; persist if changed."""
+    # Trail disabled — pure SL/TP exit per backtester Config I
+    # To re-enable: set config.TRAIL_TRIGGER_PCT back to a real value (e.g. 0.01)
+    return
     try:
         direction = trade.get("direction")
         entry = trade.get("entry_price") or 0
