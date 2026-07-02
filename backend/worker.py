@@ -346,11 +346,6 @@ async def _periodic_loop(db_):
                 STATE["ai_spend_today"] = brain.get_daily_spend()
                 STATE["trajectory_status"] = brain.get_trajectory_status()
                 STATE["last_cycle"] = now_dt.isoformat()
-
-                today_str = now_dt.date().isoformat()
-                if config.PAPER_MODE and today_str >= config.LIVE_DATE:
-                    config.PAPER_MODE = False
-                    log.warning("RAID GOING LIVE — %s", now_dt.isoformat())
             except Exception as exc:  # noqa: BLE001
                 log.error("health state refresh failed: %s", exc)
         except Exception as exc:  # noqa: BLE001

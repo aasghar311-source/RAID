@@ -237,16 +237,9 @@ def _sl_tp_hit(direction: str, price: float, sl: float, tp: float):
 
 
 async def monitor_positions(db):
-    """Update trailing stops, close SL/TP hits, and ask Claude on sudden adverse moves."""
-    # Auto-flip to live once the live date arrives.
-    try:
-        today = datetime.now(timezone.utc).date().isoformat()
-        if config.PAPER_MODE and today >= config.BOT_LIVE_DATE:
-            config.PAPER_MODE = False
-            log.warning("RAID GOING LIVE — %s", datetime.now(timezone.utc).isoformat())
-    except Exception as exc:  # noqa: BLE001
-        log.error("auto-flip check failed: %s", exc)
-
+    """Update trailing stops, close SL/TP hits, and ask Claude on sudden adverse moves.
+    PAPER MODE IS PERMANENT — there is no date-based auto-flip to live. Live activation,
+    if ever, must be an explicit operator-approved gated change (RAID Omega rebuild rule)."""
     try:
         open_trades = await db.get_open_trades()
     except Exception as exc:  # noqa: BLE001

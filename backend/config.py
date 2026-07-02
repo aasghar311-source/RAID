@@ -23,9 +23,10 @@ FLOOR_TARGET           = 155_000.0
 SUPERSONIC_TARGET      = 1_000_000.0
 
 # --- Mode -----------------------------------------------------------------
+# PAPER MODE IS PERMANENT for the Omega rebuild. There is NO date-based auto-flip.
+# Live activation must be an explicit, operator-approved, gated code change — never
+# a passive time trigger. Do not re-add LIVE_DATE / BOT_LIVE_DATE.
 PAPER_MODE             = True
-LIVE_DATE              = "2026-07-20"
-BOT_LIVE_DATE          = "2026-07-20"      # backward compat alias
 
 # --- Brain / cycle --------------------------------------------------------
 BRAIN_CYCLE_MINUTES    = 30
