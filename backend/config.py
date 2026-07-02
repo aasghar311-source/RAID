@@ -83,7 +83,7 @@ MAX_SL_DISTANCE_PCT = 0.01    # 1.0% fixed SL — backtester Config I (floor==ce
 MAX_TP_DISTANCE_PCT = 0.025   # 2.5% max TP distance — was avg 4.62%, 0/314 hit
 KALSHI_SL_PCT      = 0.50
 KALSHI_TP_PRICE    = 0.95
-TRAIL_TRIGGER_PCT  = 999.0   # Trail disabled — pure SL/TP exit per backtester
+TRAIL_TRIGGER_PCT  = 0.015   # 1.5% — late trail, insurance only. TP at 2.5% is primary exit
 TRAIL_STEP_PCT     = 0.005   # 0.5% — room for normal crypto pullbacks (was 0.3%, too tight)
 ADVERSE_MOVE_PCT   = 0.04   # override fires only on violent moves (2x stop), not at stop level
 AI_OVERRIDE_EXIT_ENABLED = True   # set False to fully disable discretionary exits

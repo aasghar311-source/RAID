@@ -81,16 +81,16 @@ def compute_pnl(direction: str, entry: float, exit_price: float, size_usd: float
 
 
 async def update_trailing_stop(trade: dict, current_price: float, db):
-    """Ratchet a trade's stop toward profit once it moves in favor; persist if changed."""
-    # Trail disabled — pure SL/TP exit per backtester Config I
-    # To re-enable: set config.TRAIL_TRIGGER_PCT back to a real value (e.g. 0.01)
-    return
+    """Ratchet a trade's stop toward profit once it moves in favor; persist if changed.
+    Late trail: single 85% lock once +1.5% (config.TRAIL_TRIGGER_PCT) is reached.
+    Insurance only — TP at 2.5% remains the primary exit."""
     try:
         direction = trade.get("direction")
         entry = trade.get("entry_price") or 0
         if entry <= 0:
             return
         current_sl = trade.get("sl")
+        symbol = trade.get("symbol", "?")
         long_like = direction in ("long", "yes")
         short_like = direction in ("short", "no")
 
@@ -98,43 +98,28 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             gain = (current_price - entry) / entry
             if gain < config.TRAIL_TRIGGER_PCT:
                 return
-            # Progressive trail: lock more profit as gain grows.
-            # 0.75-1.5%: lock 70% → still room for pullback on fresh moves
-            # 1.5-2.0%:  lock 85% → tightening hard on real profit
-            # 2.0%+:     lock 90% → aggressive near TP territory
-            if gain >= 0.02:
-                lock_pct = 0.90
-            elif gain >= 0.015:
-                lock_pct = 0.85
-            else:
-                lock_pct = 0.70
+            lock_pct = 0.85
             new_sl = entry * (1 + gain * lock_pct)
             # Fee-protected floor: never trail to a level that nets a loss after fees.
             fee_floor = entry * 1.004
-            if new_sl < fee_floor:
-                new_sl = fee_floor
+            new_sl = max(new_sl, fee_floor)
             if current_sl is None or new_sl > current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
+                log.info("TRAIL: %s lock 85%% at +%.2f%% — new SL %.6f", symbol, gain * 100, new_sl)
         elif short_like:
             gain = (entry - current_price) / entry
             if gain < config.TRAIL_TRIGGER_PCT:
                 return
-            # Progressive trail: lock more profit as gain grows.
-            if gain >= 0.02:
-                lock_pct = 0.90
-            elif gain >= 0.015:
-                lock_pct = 0.85
-            else:
-                lock_pct = 0.70
+            lock_pct = 0.85
             new_sl = entry * (1 - gain * lock_pct)
             # Fee-protected floor: never trail to a level that nets a loss after fees.
             fee_floor = entry * 0.996
-            if new_sl > fee_floor:
-                new_sl = fee_floor
+            new_sl = min(new_sl, fee_floor)
             if current_sl is None or new_sl < current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
+                log.info("TRAIL: %s lock 85%% at +%.2f%% — new SL %.6f", symbol, gain * 100, new_sl)
     except Exception as exc:  # noqa: BLE001
         log.error("update_trailing_stop failed: %s", exc)
 

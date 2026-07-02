@@ -644,6 +644,7 @@ ANALYSIS PROCESS:
      The code clamps your SL to 1.0% regardless of the structural level you set.
    - R:R must be at least 1.25:1 (code gate). Aim for 1.5:1 or better — higher R:R means the code gate and fill-side gate (1.1:1) will both pass it easily.
      At the fixed 1.0% SL, a 2.5% TP gives R:R 2.5:1. TP is hard-capped at 2.5%.
+   - Late trail activates at +1.5% gain and locks 85% of profit as insurance. TP at 2.5% is the primary exit.
    Place take_profit at the next structural target:
    - LONGS: TP at the next swing high or resistance above entry
    - SHORTS: TP at the next swing low or support below entry
