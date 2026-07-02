@@ -24,6 +24,29 @@ def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+_PAGE_SIZE = 1000  # PostgREST returns at most 1000 rows per response by default
+
+
+async def _fetch_all(table: str, columns: str, eq_filters=None, page_size: int = _PAGE_SIZE) -> list:
+    """Fetch ALL rows from `table` matching the given .eq() filters, paginating past
+    PostgREST's default 1000-row response cap via .range(). Without this, aggregations
+    over large/growing tables (trades, regime_log, pending_signals) silently truncate
+    at 1000 rows and produce wrong sums and counts."""
+    rows: list = []
+    start = 0
+    while True:
+        q = supabase.table(table).select(columns)
+        for col, val in (eq_filters or []):
+            q = q.eq(col, val)
+        res = await q.range(start, start + page_size - 1).execute()
+        batch = res.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        start += page_size
+    return rows
+
+
 _EXPECTED_TABLES = (
     "trades",
     "equity_snapshots",
@@ -615,8 +638,8 @@ async def get_recent_signal_outcomes(minutes: int = 35):
 async def get_total_realized_pnl():
     """Sum of pnl across all closed trades = total realized P&L."""
     try:
-        res = await supabase.table("trades").select("pnl").eq("status", "closed").execute()
-        return sum(float(r.get("pnl") or 0) for r in (res.data or []))
+        rows = await _fetch_all("trades", "pnl", [("status", "closed")])
+        return sum(float(r.get("pnl") or 0) for r in rows)
     except Exception as exc:  # noqa: BLE001
         log.error("get_total_realized_pnl failed: %s", exc)
         return 0.0
@@ -732,11 +755,8 @@ async def get_status_snapshot() -> dict:
         "api_spend_today": 0.0, "phase2_gate_cleared": False,
     }
     try:
-        closed = await supabase.table("trades").select(
-            "pnl, claude_reasoning", count="exact"
-        ).eq("status", "closed").execute()
-        rows = closed.data or []
-        snap["closed"] = closed.count if closed.count is not None else len(rows)
+        rows = await _fetch_all("trades", "pnl, claude_reasoning", [("status", "closed")])
+        snap["closed"] = len(rows)
         wins = sum(1 for r in rows if (r.get("pnl") or 0) > 0)
         snap["realized_pnl"] = round(sum(float(r.get("pnl") or 0) for r in rows), 2)
         if rows:
@@ -763,11 +783,9 @@ async def get_status_snapshot() -> dict:
         # Entries-by-probability-bucket: how many trades the brain took at each
         # confidence level (shows impact of the 0.45 MIN_CONFIDENCE floor).
         try:
-            _pb = await supabase.table("trades").select(
-                "predicted_prob"
-            ).eq("status", "closed").execute()
+            _pb_rows = await _fetch_all("trades", "predicted_prob", [("status", "closed")])
             _buckets = {}
-            for _r in (_pb.data or []):
+            for _r in _pb_rows:
                 _p = _r.get("predicted_prob")
                 if _p is None:
                     continue
@@ -783,11 +801,9 @@ async def get_status_snapshot() -> dict:
         # and compare to actual win rate. Shows whether the brain's confidence
         # is honest (e.g. a "0.70" bucket should win ~70%).
         try:
-            cal = await supabase.table("trades").select(
-                "predicted_prob, pnl"
-            ).eq("status", "closed").execute()
+            cal_rows = await _fetch_all("trades", "predicted_prob, pnl", [("status", "closed")])
             buckets = {}
-            for r in (cal.data or []):
+            for r in cal_rows:
                 p = r.get("predicted_prob")
                 if p is None:
                     continue
