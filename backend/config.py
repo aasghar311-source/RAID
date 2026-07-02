@@ -167,6 +167,7 @@ HEALTH_CHECK_PORT = 8080
 BASE_TRADE_SIZE    = 100.0
 RISK_REWARD_RATIO  = 2.0
 MIN_CONFIDENCE     = 0.65
+MIN_FACTOR_COUNT   = 4      # Minimum YES factors to trade (data: 4+=breakeven, 5+=profitable)
 MAX_EQUITY_DEPLOYED_PCT = 0.95   # Path B: never deploy >95% of equity in open positions
 EXCLUDED_SYMBOLS = ["GBPUSD", "EURUSD", "PAXGUSD", "XAUTUSD", "XAUUSD", "GBP", "EUR"]  # non-crypto, exclude from universe
 CLAUDE_GRAY_ZONE_MIN    = 0.70

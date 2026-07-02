@@ -414,6 +414,13 @@ async def _signal_monitor_loop(db_):
                 triggered = False
                 long_like = direction in ("long", "yes")
 
+                # Direction gate: no shorts in extreme fear (data: 25% win rate on shorts in fear).
+                if scanner.LAST_FEAR_GREED < 30 and not long_like:
+                    log.info("PENDING: skip %s short — F&G=%d < 30 (no shorts in fear)",
+                             symbol, scanner.LAST_FEAR_GREED)
+                    _rejected.add(sig["id"])
+                    continue
+
                 if trigger_type == "limit":
                     # Limit: price returned TO trigger (buy low / sell high).
                     if long_like and live_price <= trigger_price:

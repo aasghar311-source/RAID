@@ -46,6 +46,32 @@ def _extract_prob_from_reasoning(reasoning: str) -> float:
     return float(match.group(1)) if match else 0.0
 
 
+def _extract_factor_count(reasoning: str) -> int:
+    """Extract number of YES factors from 'Y:T+MTF+V=3' format."""
+    if not reasoning:
+        return 0
+    import re
+    match = re.search(r'Y:([A-Z+_]+)(?:=(\d+))?', reasoning)
+    if match:
+        factors_str = match.group(1)
+        count_str = match.group(2)
+        if count_str:
+            return int(count_str)
+        return len([f for f in factors_str.split('+') if f.strip()])
+    return 0
+
+
+def _has_mtf(reasoning: str) -> bool:
+    """Check if MTF (multi-timeframe) factor is present in the reasoning."""
+    if not reasoning:
+        return False
+    import re
+    match = re.search(r'Y:([A-Z+_]+)', reasoning)
+    if match:
+        return 'MTF' in match.group(1).split('+')
+    return False
+
+
 def _widen_tp(entry: float, sl: float, direction: str, target_rr: float = 1.5) -> float:
     """Calculate minimum TP to achieve target R:R ratio."""
     risk = abs(entry - sl)
@@ -448,6 +474,7 @@ You are RAID's autonomous trading brain. Your job: run the checklist, score ever
 Do NOT self-filter. Do NOT skip signals based on trajectory status. Do NOT raise your own quality bar above 0.65.
 The system gates (R:R check, SL band, deployment cap, daily loss limit) handle risk management — not you.
 More signals = more data = better system. Every valid signal matters.
+DIRECTION RULE: When Fear & Greed < 30, output LONG signals only. Do not short during extreme fear — data shows 75% loss rate on shorts in fear.
 
 SIZING RULES
 - probability >= 0.80: size_pct = 5.0
@@ -546,17 +573,15 @@ ANALYSIS PROCESS:
 
    STEP 1 — Check each factor. Answer YES or NO using the market data:
    Y1: Trend?      Is "px" clearly above key EMAs (e20/e50/e200) for longs, below for shorts?
-   Y2: Multi-TF?   Do 2+ of "t1h"/"t30m"/"t15m" agree with your direction?
+   Y2: Multi-TF?   Do 2+ of "t1h"/"t30m"/"t15m" agree with your direction?  (MTF — MANDATORY)
    Y3: Volume?     Is "vol" above average for this asset?
    Y4: RSI OK?     Is "rsi" NOT overbought (>70 for longs), NOT oversold (<30 for shorts)?
    Y5: Structure?  Are "shi"/"slo" clear enough for SL/TP placement?
-   Y6: Funding?    Does "fr" support you? Positive >0.0001 = short edge. Negative <-0.0001 = long edge.
-   Y7: OrderBook?  Does "ob" show a wall >$50K behind your SL level?
-   Y8: News?       Does "nsent" support your direction (bullish for longs, bearish for shorts)?
-   Y9: OI?         Is "oi" high AND "fr" aligned with your direction?
-   Y10: FearGreed? Is "fg" contrarian? Long when fg<25 OR short when fg>75?
-   Y11: Scorecard? Is your win rate >50% on this direction+regime combo?
-   Y12: Momentum?  Does "macd" show crossover or acceleration in your direction?
+   Y6: OrderBook?  Does "ob" show a wall >$50K behind your SL level?
+   Y7: News?       Does "nsent" support your direction (bullish for longs, bearish for shorts)?
+   Y8: FearGreed?  Is "fg" contrarian? Long when fg<25 OR short when fg>75?
+   Y9: Scorecard?  Is your win rate >50% on this direction+regime combo?
+   Y10: Momentum?  Does "macd" show crossover or acceleration in your direction?
 
    STEP 2 — Check each PENALTY. Answer YES or NO:
    P1: Counter-trend?   Going against dominant "t1h"?
@@ -575,10 +600,14 @@ ANALYSIS PROCESS:
    YES=4  P=0 -> 0.70     YES=7  P=0 -> 0.85     YES=5  P=1 -> 0.70
    YES=5  P=0 -> 0.75     YES=8  P=0 -> 0.90     YES=6  P=2 -> 0.70
 
-   Below 0.65 = SKIP (do not output). Below 3 YES factors = SKIP.
+   Below 0.65 = SKIP (do not output). Below 4 YES factors = SKIP.
+
+   QUALITY RULE: Signals with fewer than 4 YES factors will be rejected by the code gate.
+   MTF (multi-timeframe alignment, Y2) is MANDATORY — signals without MTF will be rejected.
+   Prioritize setups with 5+ aligned factors. These are the profitable trades.
 
    STEP 4 — Write reasoning for EVERY signal (MANDATORY):
-   Format: "Y:T+MTF+V+RSI+S+FR=6 P:0 -> 0.80"
+   Format: "Y:T+MTF+V+RSI+S+MACD=6 P:0 -> 0.80"
    Or: "Y:T+MTF+V=3 P:CT+FG=2 -> 0.55 SKIP"
    Show which factors are YES, which penalties apply, the counts, and the result.
 
@@ -868,6 +897,8 @@ async def _execute_brain_trades(
 
     # Index scan results by symbol for quick lookup.
     scan_by_symbol = {sr.symbol: sr for sr in scan_results}
+    # Cycle-global Fear & Greed (same value across all scan results).
+    _fg_index = next((int(getattr(sr, "fear_greed", 50)) for sr in scan_results), 50)
 
     open_trades = await db.get_open_trades()
     max_open = int(controls.get("max_open_trades") or config.MAX_OPEN_TRADES)
@@ -898,6 +929,19 @@ async def _execute_brain_trades(
             if recovered > 0:
                 probability = recovered
                 log.info("BRAIN: recovered prob=%.2f from reasoning for %s", probability, trade_spec.get("symbol", "?"))
+        # Factor-count gate — require MIN_FACTOR_COUNT YES factors + mandatory MTF (data-validated).
+        _fgate_reasoning = trade_spec.get("reasoning") or ""
+        _factor_count = _extract_factor_count(_fgate_reasoning)
+        if _factor_count > 0 and _factor_count < config.MIN_FACTOR_COUNT:
+            log.info("BRAIN: skip %s — only %d YES factors (min %d)", symbol, _factor_count, config.MIN_FACTOR_COUNT)
+            continue
+        if _factor_count > 0 and not _has_mtf(_fgate_reasoning):
+            log.info("BRAIN: skip %s — missing MTF factor (mandatory)", symbol)
+            continue
+        # Direction gate: no shorts in extreme fear (data: 25% win rate on shorts in fear).
+        if _fg_index is not None and _fg_index < 30 and direction in ("short", "no"):
+            log.info("BRAIN: skip %s short — F&G=%d < 30 (no shorts in fear)", symbol, _fg_index)
+            continue
         size_pct = float(trade_spec.get("size_pct", 0))
         claude_entry = float(trade_spec.get("entry_price", 0))
         stop_loss = float(trade_spec.get("stop_loss", 0))
@@ -1269,6 +1313,8 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
         # Pending mode: save signals to DB; monitor fires them on triggers.
         pending = brain_json.get("pending_signals") or []
         regime_by_asset = brain_json.get("regime_by_asset") or {}
+        # Cycle-global Fear & Greed (same value across all scan results).
+        _fg_index = next((int(getattr(sr, "fear_greed", 50)) for sr in scan_results), 50)
         # Filter out signals below MIN_CONFIDENCE.
         filtered = []
         for sig in pending:
@@ -1281,6 +1327,19 @@ async def run_brain_cycle(scan_results: list, news_by_symbol: dict, db, controls
                     prob = recovered
                     sig["probability"] = prob
                     log.info("PENDING: recovered prob=%.2f from reasoning for %s", prob, sig.get("symbol", "?"))
+            # Factor-count gate — require MIN_FACTOR_COUNT YES factors + mandatory MTF (data-validated).
+            _fgate_reasoning = sig.get("reasoning") or ""
+            _factor_count = _extract_factor_count(_fgate_reasoning)
+            if _factor_count > 0 and _factor_count < config.MIN_FACTOR_COUNT:
+                log.info("PENDING: skip %s — only %d YES factors (min %d)", sig.get("symbol", "?"), _factor_count, config.MIN_FACTOR_COUNT)
+                continue
+            if _factor_count > 0 and not _has_mtf(_fgate_reasoning):
+                log.info("PENDING: skip %s — missing MTF factor (mandatory)", sig.get("symbol", "?"))
+                continue
+            # Direction gate: no shorts in extreme fear (data: 25% win rate on shorts in fear).
+            if _fg_index is not None and _fg_index < 30 and sig.get("direction") in ("short", "no"):
+                log.info("PENDING: skip %s short — F&G=%d < 30 (no shorts in fear)", sig.get("symbol", "?"), _fg_index)
+                continue
             if prob < config.MIN_CONFIDENCE:
                 log.info("PENDING: skip %s prob=%.2f < floor %.2f",
                          sig.get("symbol"), prob, config.MIN_CONFIDENCE)
