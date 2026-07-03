@@ -154,12 +154,7 @@ VOLUME_CONFIRM_MULT = 1.5
 
 # --- Learning (kept for worker backward compat; superseded by sizing_state) --
 LEARNING_ENABLED       = False    # turned off — brain v2 uses Kelly/sizing_state
-LEARNING_INTERVAL_DAYS = 7
-LEARNING_MIN_SAMPLE    = 50
-LEARNING_LOW_WIN_RATE  = 0.40
-LEARNING_HIGH_WIN_RATE = 0.65
-LEARNING_WEIGHT_DOWN   = 0.8
-LEARNING_WEIGHT_UP     = 1.2
+LEARNING_INTERVAL_DAYS = 7        # only LEARNING_* constant still read (worker cadence check)
 
 # --- Ops ------------------------------------------------------------------
 HEALTH_CHECK_PORT = 8080
@@ -179,19 +174,6 @@ BUDGET_TECH_THRESHOLD   = 75.0
 CLAUDE_MAX_TOKENS       = 100
 KILL_SWITCH_ACTIVE      = False
 MAX_ENTRIES_PER_CYCLE   = 30
-PULLBACK_BAND_PCT       = 0.01
-PULLBACK_LOOKBACK       = 12
-PULLBACK_MIN_BOUNCE     = 0.005
-RSI_LONG_BAND_LOW       = 45.0
-RSI_LONG_BAND_HIGH      = 60.0
-RSI_SHORT_BAND_LOW      = 40.0
-RSI_SHORT_BAND_HIGH     = 55.0
-TS_RSI_WEIGHT  = 25.0
-TS_MACD_WEIGHT = 25.0
-TS_EMA_STRONG  = 50.0
-TS_EMA_MIXED   = 15.0
-TS_VOLUME_WEIGHT = 10.0
-TS_RSI_PENALTY = 15.0
 KALSHI_YES_LOW  = 0.30
 KALSHI_YES_HIGH = 0.70
 KALSHI_SKIP_LOW  = 0.35
