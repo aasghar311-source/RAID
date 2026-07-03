@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import config
 from signals import Signal
+from raid.core.universe import trade_margin
 
 log = logging.getLogger("raid.gate")
 
@@ -49,10 +50,11 @@ async def check_gate(signal: Signal, db):
         open_trades = await db.get_open_trades()
         if len(open_trades) >= config.MAX_OPEN_TRADES:
             return GateResult(False, "max_open_trades")
-        # Deployment cap: never hold more than MAX_EQUITY_DEPLOYED_PCT of equity
-        # in open positions. Protects the remainder as dry powder.
+        # Deployment cap: never hold more than MAX_EQUITY_DEPLOYED_PCT of equity in open
+        # positions. Counts MARGIN, not notional (leveraged trades tag 'margin=X'; legacy /
+        # pre-leverage trades fall back to size_usd since notional==margin at 1x).
         try:
-            deployed = sum(float(t.get("size_usd") or 0) for t in open_trades)
+            deployed = sum(trade_margin(t) for t in open_trades)
             equity_now = await db.get_equity()
             if equity_now > 0 and deployed >= equity_now * config.MAX_EQUITY_DEPLOYED_PCT:
                 return GateResult(False, "max_equity_deployed")

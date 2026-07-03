@@ -432,6 +432,51 @@ def test_executor_short_trail_moves_down():
     assert db.persisted_sl is not None and db.persisted_sl < 100.0   # moved DOWN, not up
 
 
+# ── 3X LEVERAGE with drawdown de-risking ─────────────────────────────────────
+
+def test_effective_leverage_ladder():
+    from raid.runner import _effective_leverage
+    assert _effective_leverage(0.00) == (3, None)          # normal 3x
+    assert _effective_leverage(0.05) == (3, None)          # <6% stays 3x
+    assert _effective_leverage(0.07) == (2, None)          # 6%+  -> 2x
+    assert _effective_leverage(0.11) == (1, None)          # 10%+ -> 1x
+    assert _effective_leverage(0.16) == (None, "pause")    # 15%+ -> pause
+    assert _effective_leverage(0.21) == (None, "shutdown") # 20%+ -> shutdown
+
+
+def test_leverage_sizing_math():
+    base = 4000 * config.MAX_TRADE_SIZE_PCT                  # $200 base (margin)
+    assert base == 200.0
+    notional = base * config.LEVERAGE_MULTIPLIER             # $600 notional at 3x
+    assert notional == 600.0
+    assert notional / config.LEVERAGE_MULTIPLIER == 200.0    # margin recovered
+
+
+def test_trade_margin_parsing():
+    from raid.core.universe import trade_margin
+    # Leveraged trade tags margin -> parsed (not the $600 notional).
+    assert trade_margin({"claude_reasoning": "RAID-C2 limit net_rr=1.9 lev=3x margin=200.00 :: x",
+                         "size_usd": 600.0}) == 200.0
+    # Pre-leverage / untagged trade -> notional (size_usd) IS the margin.
+    assert trade_margin({"claude_reasoning": "RAID-C2 limit net_rr=1.9 :: x", "size_usd": 200.0}) == 200.0
+
+
+def test_pnl_uses_notional_at_leverage():
+    from executor import compute_pnl
+    # $600 notional, +2% move -> ~$12 gross minus ~$1.92 round-trip fees.
+    pnl = compute_pnl("long", 100.0, 102.0, 600.0)
+    assert 10.0 < pnl < 12.0
+
+
+def test_deployment_cap_counts_margin_allows_19():
+    from raid.core.universe import trade_margin
+    trades = [{"claude_reasoning": "RAID-C2 x lev=3x margin=200.00 :: y", "size_usd": 600.0} for _ in range(19)]
+    total_margin = sum(trade_margin(t) for t in trades)
+    assert total_margin == 3800.0                 # 19 x $200 margin ($11,400 notional)
+    assert total_margin <= 4000 * 0.95            # fits the 95% cap
+    assert total_margin + 200.0 > 4000 * 0.95     # a 20th would exceed
+
+
 # ── regression: a full book must NOT blank out regime logging ────────────────
 
 def _cycle_scan(sym):

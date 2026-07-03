@@ -49,8 +49,22 @@ CLAUDE_MODEL           = "claude-haiku-4-5-20251001"
 KELLY_FRACTION_DEFAULT        = 0.40
 TARGET_VOLATILITY             = 0.15        # vol scalar denominator
 MIN_TRADE_SIZE_PCT            = 0.025       # 2.5% equity floor (Path B)
-MAX_TRADE_SIZE_PCT            = 0.05        # 5% equity cap (~$200 now, auto-grows w/ equity)
+MAX_TRADE_SIZE_PCT            = 0.05        # 5% equity BASE (margin) per trade (~$200 now)
 MAX_TRADE_SIZE_PCT_BEHIND     = 0.05        # 5% equity cap (~$200 now, auto-grows w/ equity)
+
+# --- Leverage (3x aggressive sizing with drawdown-based de-risking) --------
+# Leverage scales the position NOTIONAL, not the risk/base calc: $200 base x 3x = $600
+# notional using $200 margin. The 95% deployment cap counts MARGIN (not notional), so the
+# max concurrent-position count is unchanged (~19) but each position is 3x the exposure.
+LEVERAGE_MULTIPLIER = 3       # 3x leverage on all positions
+MAX_LEVERAGE        = 5       # absolute ceiling (never exceeded)
+# Drawdown (from peak equity) reduces leverage, then pauses, then hard-stops:
+LEVERAGE_DERISKING = {
+    0.06: 2,     # 6% drawdown  -> 2x
+    0.10: 1,     # 10% drawdown -> 1x (no leverage)
+    0.15: 0,     # 15% drawdown -> pause all entries
+    0.20: -1,    # 20% drawdown -> hard shutdown (kill switch)
+}
 HIGH_CONVICTION_THRESHOLD     = 0.72        # prob floor for size boost when BEHIND
 CRITICAL_CONVICTION_THRESHOLD = 0.78        # prob floor for size boost when CRITICAL
 

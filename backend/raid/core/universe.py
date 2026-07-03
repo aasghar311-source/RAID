@@ -66,6 +66,21 @@ def within_cooldown(last_iso, now_iso, hours: float) -> bool:
     return (now - last).total_seconds() < hours * 3600.0
 
 
+def parse_margin(reasoning) -> float | None:
+    """Extract the tagged margin ('margin=200.00') from a trade's claude_reasoning, or None."""
+    m = re.search(r"margin=([\d.]+)", str(reasoning or ""))
+    return float(m.group(1)) if m else None
+
+
+def trade_margin(trade: dict) -> float:
+    """Margin used by an open trade for the deployment cap. Leveraged trades tag 'margin=X';
+    pre-leverage trades carry no leverage so their notional (size_usd) IS the margin."""
+    m = parse_margin(trade.get("claude_reasoning"))
+    if m is not None:
+        return m
+    return float(trade.get("size_usd") or 0)
+
+
 def has_opposite(open_directions, direction: str) -> bool:
     """True if an OPPOSITE-direction position is already open on the symbol (so a new
     entry would hedge/net-out on one symbol — block it). Same-direction stacking returns

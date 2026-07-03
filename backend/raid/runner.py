@@ -33,7 +33,9 @@ from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier
 from raid.core.strategy import StrategyContext, StrategyMode
-from raid.core.universe import compute_universe_rankings, has_opposite, parse_strategy_tag, within_cooldown
+from raid.core.universe import (
+    compute_universe_rankings, has_opposite, parse_strategy_tag, trade_margin, within_cooldown,
+)
 from raid.strategies.catalog import build_default_registry
 from raid.strategies.rotation import C6_REBALANCE_HOURS
 
@@ -83,6 +85,30 @@ log.info("RAID-C3 enabled — short trend breakdown (margin verified)")
 log.info("C7 shorts enabled — cross-sectional momentum short sleeve active")
 log.info("RAID-C8 enabled — statistical pairs (data-gated: produces candidates only when cointegration data available)")
 log.info("RAID-C9 enabled — funding carry (data-gated: needs two-leg perp/spot execution; funding rates are available)")
+
+# Peak equity high-water mark for drawdown-based leverage de-risking. Module-level: on a
+# restart it re-seeds from max(STARTING_EQUITY, current) — conservative (floors drawdown at
+# the loss from the starting capital; the true pre-restart peak is not persisted).
+_peak_equity = 0.0
+
+
+def _effective_leverage(drawdown_pct: float):
+    """Leverage to use given drawdown from peak. Returns (leverage:int, None) normally, or
+    (None, 'pause'|'shutdown') at deep drawdown. Applies config.LEVERAGE_DERISKING
+    (6%->2x, 10%->1x, 15%->pause, 20%->shutdown). Pure + testable."""
+    lev = config.LEVERAGE_MULTIPLIER
+    halt = None
+    for threshold, reduced in sorted(config.LEVERAGE_DERISKING.items()):
+        if drawdown_pct >= threshold:
+            if reduced < 0:
+                halt = "shutdown"
+            elif reduced == 0:
+                halt = "pause"
+            else:
+                lev = reduced
+    if halt:
+        return None, halt
+    return min(lev, config.MAX_LEVERAGE), None
 
 
 def _rotation_pnl(direction: str, entry: float, exit_price: float, size_usd: float) -> float:
@@ -225,6 +251,24 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     ts = datetime.now(timezone.utc).isoformat()
     paper_strats = _REGISTRY.paper()
 
+    # --- Leverage + drawdown de-risking (peak high-water mark) ---
+    global _peak_equity
+    _peak_equity = max(_peak_equity, config.STARTING_EQUITY, equity)
+    drawdown = (_peak_equity - equity) / _peak_equity if _peak_equity > 0 else 0.0
+    eff_lev, halt = _effective_leverage(drawdown)
+    if halt == "shutdown":
+        log.critical("RAID ENGINE: DRAWDOWN %.1f%% >= 20%% — HARD SHUTDOWN (setting kill switch)", drawdown * 100)
+        try:
+            await db.set_kill_switch(True, f"drawdown {drawdown * 100:.1f}% >= 20%", "runner_auto")
+        except Exception as exc:  # noqa: BLE001
+            log.error("RAID ENGINE: failed to set kill switch on shutdown: %s", exc)
+        return 0
+    entries_paused = (halt == "pause")
+    if entries_paused:
+        log.warning("RAID ENGINE: DRAWDOWN %.1f%% >= 15%% — pausing all entries this cycle", drawdown * 100)
+    elif eff_lev != config.LEVERAGE_MULTIPLIER:
+        log.info("RAID ENGINE: DRAWDOWN %.1f%% — leverage reduced to %dx", drawdown * 100, eff_lev)
+
     # --- Cross-sectional universe ranking (computed ONCE per cycle) ---
     rankings = compute_universe_rankings(scan_results)
 
@@ -249,7 +293,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         if rotated:
             open_trades = [t for t in open_trades if t.get("id") not in rotated]
 
-    deployed = sum(float(t.get("size_usd") or 0) for t in open_trades)
+    deployed_margin = sum(trade_margin(t) for t in open_trades)   # MARGIN, not notional
     open_symbols = {t.get("symbol") for t in open_trades if t.get("symbol")}
     # Per-symbol open directions for opposite-direction protection (block hedging one symbol).
     open_dirs_by_symbol: dict[str, set] = {}
@@ -290,12 +334,15 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             "trajectory": None,
         })
 
+        # Drawdown pause (15%+): keep classifying regimes but book NO new entries this cycle.
+        if entries_paused:
+            continue
         # (b) Capacity gates apply to NEW ENTRIES only. Once the book is full or the 95%
-        # deployment cap is reached, skip booking but keep classifying the rest of the
+        # MARGIN deployment cap is reached, skip booking but keep classifying the rest of the
         # universe (continue, NOT break — so regime observability never goes dark).
         if len(open_trades) + booked >= max_open or booked >= config.MAX_ENTRIES_PER_CYCLE:
             continue
-        if deployed >= equity * config.MAX_EQUITY_DEPLOYED_PCT:
+        if deployed_margin >= equity * config.MAX_EQUITY_DEPLOYED_PCT:
             continue
 
         # (c) Post-close per-symbol cooldown: at 5-min cadence, don't immediately re-enter a
@@ -357,9 +404,17 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         if not decision.approved:
             log.info("RAID ENGINE: risk reject %s %s — %s", sr.symbol, strat.strategy_id, decision.reason)
             continue
-        notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * equity)
-        if notional < 10 or deployed + notional > equity * config.MAX_EQUITY_DEPLOYED_PCT:
+        # Base = risk-sized notional capped at 5% equity (~$200 margin). Leverage scales the
+        # position notional; margin (= base) is what counts against the 95% deployment cap.
+        base_notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * equity)
+        if base_notional < 10:
             continue
+        notional = base_notional * eff_lev
+        margin = base_notional
+        if deployed_margin + margin > equity * config.MAX_EQUITY_DEPLOYED_PCT:
+            continue
+        log.info("RAID ENGINE: SIZING %s $%.2f notional (%dx leverage, $%.2f margin)",
+                 sr.symbol, notional, eff_lev, margin)
 
         sig = Signal(
             market="crypto", symbol=sr.symbol, direction=c.direction.value, confidence=0.0,
@@ -378,13 +433,13 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             "pnl": 0, "status": "open", "close_reason": None, "paper_mode": config.PAPER_MODE,
             "sl": float(c.stop_price), "tp": float(c.targets[0]),
             "instrument_type": "crypto", "market_regime": ctx.market_regime.value,
-            "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} :: {strat.explain_decision(c, ctx)}"[:1000],
+            "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} lev={eff_lev}x margin={margin:.2f} :: {strat.explain_decision(c, ctx)}"[:1000],
             "predicted_prob": None, "kelly_fraction": None,
         }
         tid = await db.log_trade(trade)
         if tid:
             booked += 1
-            deployed += notional
+            deployed_margin += margin
             open_symbols.add(sr.symbol)
             log.info("RAID ENGINE: booked %s %s %s $%.2f sl=%.6f tp=%.6f net_rr=%s",
                      strat.strategy_id, sr.symbol, c.direction.value, notional,
