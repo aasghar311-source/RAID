@@ -42,7 +42,11 @@ log = logging.getLogger("raid.runner")
 # Strategies with real logic run PAPER; the rest stay SHADOW until their data/capability
 # contract is met (promotion to PAPER is otherwise evidence-gated). C6/C7/C10 activated
 # with the universe-ranking + microstructure data contract.
-_PAPER_ON_CUTOVER = ("RAID-C1", "RAID-C2", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10")
+# C1 quarantined 2026-07-03 (removed from the paper set) — 11% win rate (1/9), -$14.98 over
+# the 124-trade review (false-breakout machine). REVERSIBLE: move "RAID-C1" back here and
+# drop it from _QUARANTINED to re-activate.
+_PAPER_ON_CUTOVER = ("RAID-C2", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10")
+_QUARANTINED = {"RAID-C1": "11% win rate over 9 trades, pending review"}
 _RISK = PortfolioRiskManager(RiskTier.INITIAL)   # Tier 1: 0.5% risk/trade at cutover
 _CAPABILITIES = frozenset({CAP_SPOT_LONG})       # spot long only in paper
 
@@ -61,6 +65,9 @@ def build_cutover_registry():
     reg = build_default_registry()
     for sid in _PAPER_ON_CUTOVER:
         reg.set_mode(sid, StrategyMode.PAPER)
+    for sid, reason in _QUARANTINED.items():
+        reg.set_mode(sid, StrategyMode.QUARANTINED)   # registered but never in paper() → not booked
+        log.info("%s quarantined — %s", sid, reason)
     return reg
 
 

@@ -9,7 +9,7 @@ import scanner
 import brain
 from signals import Signal
 from scanner import ScanResult
-from raid.execution.time_stops import c10_time_stop_due
+from raid.execution.time_stops import c10_time_stop_due, classify_stop_reason, no_progress_exit_due
 
 log = logging.getLogger("raid.executor")
 
@@ -294,8 +294,10 @@ async def monitor_positions(db):
                 if hit == "take_profit" and trade.get("trail_active"):
                     log.info("TP EXTENSION: disabled — capped at 2.5%% (%s %s)",
                              trade["market"], trade["symbol"])
-                # Distinguish trailing_stop from original stop_loss.
-                close_reason = "trailing_stop" if trade.get("trail_active") and hit == "stop_loss" else hit
+                # Distinguish trailing_stop from a true stop_loss by where the SL sits
+                # relative to entry (trail_active is in-memory only and never persisted, so
+                # deriving from the persisted SL is the accurate signal — see time_stops).
+                close_reason = classify_stop_reason(direction, entry, sl) if hit == "stop_loss" else hit
                 pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
                 await db.close_trade(trade["id"], price, pnl, close_reason)
                 log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], close_reason, pnl)
@@ -311,6 +313,28 @@ async def monitor_positions(db):
                 log.info("TRADE CLOSE %s %s reason=sweep_time_stop pnl=$%.2f",
                          trade["market"], trade["symbol"], pnl)
                 continue
+
+            # No-progress exit — cut a stalled trade BEFORE the 3h MAT. Fires at 90 min if
+            # the CURRENT gain is still under +0.3% (data: such trades almost never recover;
+            # they drift to a MAT death at ~-$2.04). Placed ahead of MAT so a stalled trade
+            # exits at 90 min instead of waiting to 180 min.
+            if config.NO_PROGRESS_EXIT_ENABLED and trade.get("open_time"):
+                try:
+                    _np_opened = datetime.fromisoformat(str(trade["open_time"]).replace("Z", "+00:00"))
+                    _np_mins = (datetime.now(timezone.utc) - _np_opened).total_seconds() / 60.0
+                    if no_progress_exit_due(direction, entry, price, _np_mins,
+                                            config.NO_PROGRESS_CHECK_MINUTES, config.NO_PROGRESS_MIN_GAIN_PCT):
+                        _np_gain = (price - entry) / entry if direction in ("long", "yes") else (entry - price) / entry
+                        pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
+                        await db.close_trade(trade["id"], price, pnl, "no_progress_exit")
+                        log.info(
+                            "NO PROGRESS: %s %s closed at %.0f min — gain %.2f%% < %.2f%% threshold pnl=$%.2f",
+                            trade["market"], trade["symbol"], _np_mins, _np_gain * 100,
+                            config.NO_PROGRESS_MIN_GAIN_PCT * 100, pnl,
+                        )
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    log.error("no_progress check failed for %s: %s", trade.get("id"), exc)
 
             # MAT (Matured Exit) system — time-based checkpoints.
             # 0-2h: normal trading (SL/trail/TP above handle it)
@@ -355,25 +379,6 @@ async def monitor_positions(db):
 
                 except Exception as exc:  # noqa: BLE001
                     log.error("mat_exit check failed for %s: %s", trade.get("id"), exc)
-
-            # No-progress exit: a trade that never went meaningfully green is a dud.
-            # Cut it early instead of letting it bleed to the 3h max-hold. SL/TP and
-            # max-hold above always take priority. Thresholds set from peak_pnl_pct data.
-            if config.NO_PROGRESS_EXIT_ENABLED and trade.get("open_time"):
-                try:
-                    opened_np = datetime.fromisoformat(str(trade["open_time"]).replace("Z", "+00:00"))
-                    mins_open = (datetime.now(timezone.utc) - opened_np).total_seconds() / 60.0
-                    peak = trade.get("peak_pnl_pct") or 0
-                    if mins_open >= config.NO_PROGRESS_MINUTES and peak < config.NO_PROGRESS_MIN_PEAK_PCT:
-                        pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
-                        await db.close_trade(trade["id"], price, pnl, "no_progress_exit")
-                        log.info(
-                            "TRADE CLOSE %s %s reason=no_progress_exit mins=%.0f peak=%.2f%% pnl=$%.2f",
-                            trade["market"], trade["symbol"], mins_open, peak, pnl,
-                        )
-                        continue
-                except Exception as exc:  # noqa: BLE001
-                    log.error("no_progress check failed for %s: %s", trade.get("id"), exc)
 
             # Violent adverse move (well past the stop) → ask Claude to hold or exit.
             # Gated so it never competes with the mechanical stop at the same level.

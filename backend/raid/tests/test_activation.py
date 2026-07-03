@@ -13,7 +13,9 @@ from raid.core.microstructure import detect_liquidity_sweep
 from raid.core.provider import CAP_SPOT_LONG
 from raid.core.strategy import StrategyContext
 from raid.core.universe import compute_universe_rankings, parse_strategy_tag, within_cooldown
-from raid.execution.time_stops import C10_MAX_HOLD_MINUTES, c10_time_stop_due
+from raid.execution.time_stops import (
+    C10_MAX_HOLD_MINUTES, c10_time_stop_due, classify_stop_reason, no_progress_exit_due,
+)
 from raid.strategies.rotation import C6RelativeStrengthRotation, C7CrossSectionalMomentum
 from raid.strategies.sweep import C10LiquiditySweepReversal
 
@@ -248,6 +250,70 @@ def test_within_cooldown():
     assert within_cooldown("2026-07-02T00:00:00+00:00", "2026-07-02T01:00:00+00:00", 2.0) is True
     assert within_cooldown("2026-07-02T00:00:00+00:00", "2026-07-02T03:00:00+00:00", 2.0) is False
     assert within_cooldown(None, "2026-07-02T03:00:00+00:00", 2.0) is False
+
+
+# ── FIX 1: C1 quarantine ─────────────────────────────────────────────────────
+
+def test_c1_quarantined_and_absent_from_paper():
+    # Quarantine is a registry mode (is_eligible stays regime-based), so the correct
+    # assertion is: C1 is QUARANTINED, still registered, and NOT in the paper() set the
+    # runner books from.
+    from raid.core.strategy import StrategyMode
+    from raid.runner import build_cutover_registry
+    reg = build_cutover_registry()
+    assert reg.mode("RAID-C1") == StrategyMode.QUARANTINED
+    assert "RAID-C1" in reg.ids()                       # still registered (reversible)
+    paper_ids = {s.strategy_id for s in reg.paper()}
+    assert "RAID-C1" not in paper_ids                   # never booked
+    assert paper_ids == {"RAID-C2", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10"}
+
+
+# ── FIX 2: no-progress exit (production predicate) ───────────────────────────
+
+def test_no_progress_exit_fires_at_90min_below_threshold():
+    # +0.2% at 90 min (< 0.3%) → cut.
+    assert no_progress_exit_due("long", 100.0, 100.2, 90.0, 90.0, 0.003) is True
+    # short side mirrors.
+    assert no_progress_exit_due("short", 100.0, 99.8, 95.0, 90.0, 0.003) is True
+
+
+def test_no_progress_exit_holds_when_green_enough():
+    # +0.5% at 90 min (>= 0.3%) → keep.
+    assert no_progress_exit_due("long", 100.0, 100.5, 90.0, 90.0, 0.003) is False
+
+
+def test_no_progress_exit_does_not_fire_before_check_minutes():
+    # At 60 min it is too early regardless of gain.
+    assert no_progress_exit_due("long", 100.0, 100.0, 60.0, 90.0, 0.003) is False
+
+
+# ── FIX 4: trail labeling ────────────────────────────────────────────────────
+
+def test_trail_labeling_long():
+    assert classify_stop_reason("long", 100.0, 101.0) == "trailing_stop"   # SL above entry = trailed
+    assert classify_stop_reason("long", 100.0, 99.0) == "stop_loss"        # SL below entry = true stop
+
+
+def test_trail_labeling_short_and_baddata():
+    assert classify_stop_reason("short", 100.0, 99.0) == "trailing_stop"   # SL below entry = trailed (short)
+    assert classify_stop_reason("short", 100.0, 101.0) == "stop_loss"
+    assert classify_stop_reason("long", 0, 99.0) == "stop_loss"            # fails closed on bad entry
+
+
+# ── FIX 3: C4 RSI ceiling loosened 45 -> 50 ──────────────────────────────────
+
+def _c4_feat(rsi):
+    return _feat("5m", last_price=95.3, swing_low=95.0, swing_high=100.0, rsi14=rsi, atr_pct=0.008)
+
+
+def test_c4_rsi_ceiling_admits_neutral_rsi():
+    from raid.strategies.meanrev import C4RangeMeanReversion
+    c4 = C4RangeMeanReversion()
+    # RSI 48 is above the OLD 45 ceiling but within the new 50 ceiling → now fires.
+    cands = c4.generate_candidates(_ctx(MarketRegime.RANGE, features={"5m": _c4_feat(48.0)}))
+    assert len(cands) == 1 and cands[0].strategy_id == "RAID-C4"
+    # RSI 55 is above the new ceiling → still no trade.
+    assert c4.generate_candidates(_ctx(MarketRegime.RANGE, features={"5m": _c4_feat(55.0)})) == []
 
 
 # ── regression: a full book must NOT blank out regime logging ────────────────

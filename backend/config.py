@@ -101,12 +101,13 @@ MAT_CHECKPOINT_HOURS = 2     # first checkpoint: close if nicely profitable (was
 MAT_PROFIT_PCT = 0.005       # 0.5% profit threshold at checkpoint — lower bar for faster exit
 MAT_BREAKEVEN_PCT = 0.0025   # 0.25% covers round-trip fees — close as breakeven
 MAX_HOLD_EXIT_ENABLED = True # set False to disable stale-trade exits
-# No-progress exit: kill trades that never go meaningfully green (the dead-trade bucket).
-# Evidence: losing trades peaked at ~0.45-0.59% avg; winners showed green early. A trade still
-# under NO_PROGRESS_MIN_PEAK_PCT after NO_PROGRESS_MINUTES is behaving like the losing population.
-NO_PROGRESS_EXIT_ENABLED = False  # set False to disable
-NO_PROGRESS_MINUTES      = 45     # how long to give a trade to show real green
-NO_PROGRESS_MIN_PEAK_PCT = 0.5    # if peak_pnl_pct never reached this %, it's a dud
+# No-progress exit: cut stalled trades BEFORE the 3h MAT death. 124-trade review: 28
+# trades sat ~3h doing nothing then MAT-closed at -$2.04 avg; a trade not at least +0.3%
+# by 90 min almost never recovers. Cutting at 90 min (~-$1.00 avg) saves ~$1/dead trade.
+# Uses CURRENT gain vs entry (not peak) — see raid.execution.time_stops.no_progress_exit_due.
+NO_PROGRESS_EXIT_ENABLED  = True    # enabled 2026-07-03 per 124-trade review
+NO_PROGRESS_CHECK_MINUTES = 90      # check at 1.5h
+NO_PROGRESS_MIN_GAIN_PCT  = 0.003   # 0.3% current gain required to stay open past the check
 
 # --- EOD close (Phase 2 stocks/options) -----------------------------------
 EOD_CLOSE_HOUR = 16
