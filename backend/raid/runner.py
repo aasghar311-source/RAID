@@ -44,14 +44,14 @@ log = logging.getLogger("raid.runner")
 # Strategies with real logic run PAPER; the rest stay SHADOW until their data/capability
 # contract is met (promotion to PAPER is otherwise evidence-gated). C6/C7/C10 activated
 # with the universe-ranking + microstructure data contract.
-# C1 quarantined 2026-07-03 (removed from the paper set) — 11% win rate (1/9), -$14.98 over
-# the 124-trade review (false-breakout machine). REVERSIBLE: move "RAID-C1" back here and
-# drop it from _QUARANTINED to re-activate.
 # 2026-07-03: C3 (shorts), C8 (pairs), C9 (carry) promoted to paper after margin/futures were
-# enabled on the account (1x leverage, paper). C8/C9 are data-gated stubs — registered paper
-# but produce 0 candidates until their two-leg data/execution contract is built.
-_PAPER_ON_CUTOVER = ("RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C8", "RAID-C9", "RAID-C10")
-_QUARANTINED = {"RAID-C1": "11% win rate over 9 trades, pending review"}
+# enabled on the account. C8/C9 are data-gated stubs — produce 0 candidates until their two-leg
+# contract is built. C1 was quarantined (11% win, false-breakout machine) then UN-quarantined
+# with a 1.5x breakout-volume confirmation filter (see trend.py) to cut the false breakouts.
+# All ten are paper (8 produce candidates; C8/C9 are stubs). REVERSIBLE: to re-quarantine a
+# strategy, drop it from _PAPER_ON_CUTOVER and add it to _QUARANTINED.
+_PAPER_ON_CUTOVER = ("RAID-C1", "RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C8", "RAID-C9", "RAID-C10")
+_QUARANTINED: dict = {}
 _RISK = PortfolioRiskManager(RiskTier.INITIAL)   # Tier 1: 0.5% risk/trade at cutover
 # Margin + futures verified on the Kraken account (1x leverage only, paper). Granting SHORT
 # (C3/C7-short/C8), FUTURES + MARGIN (C9) so their is_eligible capability gate passes.
@@ -85,6 +85,8 @@ log.info("RAID-C3 enabled — short trend breakdown (margin verified)")
 log.info("C7 shorts enabled — cross-sectional momentum short sleeve active")
 log.info("RAID-C8 enabled — statistical pairs (data-gated: produces candidates only when cointegration data available)")
 log.info("RAID-C9 enabled — funding carry (data-gated: needs two-leg perp/spot execution; funding rates are available)")
+log.info("RAID-C1 un-quarantined — breakout now requires 1.5x volume confirmation; %d paper strategies (8 producing; C8/C9 data-gated stubs)",
+         len(_REGISTRY.paper()))
 
 # Peak equity high-water mark for drawdown-based leverage de-risking. Module-level: on a
 # restart it re-seeds from max(STARTING_EQUITY, current) — conservative (floors drawdown at

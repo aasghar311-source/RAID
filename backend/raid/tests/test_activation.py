@@ -256,20 +256,16 @@ def test_within_cooldown():
 
 # ── FIX 1: C1 quarantine ─────────────────────────────────────────────────────
 
-def test_c1_quarantined_and_absent_from_paper():
-    # Quarantine is a registry mode (is_eligible stays regime-based), so the correct
-    # assertion is: C1 is QUARANTINED, still registered, and NOT in the paper() set the
-    # runner books from.
+def test_all_ten_paper_c1_unquarantined():
+    # C1 was un-quarantined (with a 1.5x volume filter). All ten strategies are now in paper
+    # mode (8 produce candidates; C8/C9 are data-gated stubs). _QUARANTINED is empty.
     from raid.core.strategy import StrategyMode
-    from raid.runner import build_cutover_registry
+    from raid.runner import build_cutover_registry, _QUARANTINED
     reg = build_cutover_registry()
-    assert reg.mode("RAID-C1") == StrategyMode.QUARANTINED
-    assert "RAID-C1" in reg.ids()                       # still registered (reversible)
+    assert "RAID-C1" not in _QUARANTINED
+    assert reg.mode("RAID-C1") == StrategyMode.PAPER
     paper_ids = {s.strategy_id for s in reg.paper()}
-    assert "RAID-C1" not in paper_ids                   # never booked
-    # 2026-07-03: C3/C8/C9 enabled -> 9 paper strategies (all except quarantined C1).
-    assert paper_ids == {"RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5", "RAID-C6",
-                         "RAID-C7", "RAID-C8", "RAID-C9", "RAID-C10"}
+    assert paper_ids == {f"RAID-C{i}" for i in range(1, 11)}   # all 10 in paper mode
 
 
 # ── FIX 2: no-progress exit (production predicate) ───────────────────────────
@@ -475,6 +471,32 @@ def test_deployment_cap_counts_margin_allows_19():
     assert total_margin == 3800.0                 # 19 x $200 margin ($11,400 notional)
     assert total_margin <= 4000 * 0.95            # fits the 95% cap
     assert total_margin + 200.0 > 4000 * 0.95     # a 20th would exceed
+
+
+# ── C1 un-quarantine: 1.5x breakout-volume confirmation ──────────────────────
+
+def _c1_feat():
+    # Valid C1 breakout setup: stacked up, price just under resistance.
+    return _feat("5m", last_price=99.5, swing_high=100.0, ema20=99.0, ema50=98.0, atr_pct=0.008)
+
+
+def _vol_candles(last_vol, avg_vol=100.0, n=21):
+    rows = [[i, 99.0, 99.0, 99.0, 99.0, avg_vol] for i in range(n - 1)]
+    rows.append([n, 99.0, 99.0, 99.0, 99.0, last_vol])
+    return rows
+
+
+def test_c1_volume_filter_skips_low_volume():
+    from raid.strategies.trend import C1LongTrendBreakout
+    ctx = _ctx(MarketRegime.TREND_UP, extras={"candles_5m": _vol_candles(120.0)}, features={"5m": _c1_feat()})
+    assert C1LongTrendBreakout().generate_candidates(ctx) == []   # 1.2x avg < 1.5x -> skip
+
+
+def test_c1_volume_filter_allows_high_volume():
+    from raid.strategies.trend import C1LongTrendBreakout
+    ctx = _ctx(MarketRegime.TREND_UP, extras={"candles_5m": _vol_candles(200.0)}, features={"5m": _c1_feat()})
+    cands = C1LongTrendBreakout().generate_candidates(ctx)
+    assert len(cands) == 1 and cands[0].strategy_id == "RAID-C1"   # 2.0x avg >= 1.5x -> produce
 
 
 # ── regression: a full book must NOT blank out regime logging ────────────────

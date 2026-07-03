@@ -701,7 +701,7 @@ async def main():
         from raid import runner as raid_runner
         _held = await raid_runner._hold_lease(db)
         log.info(
-            "RAID ENGINE ONLINE — worker=%s lease=%s — 10 strategies registered (C1/C2/C4/C5 paper, rest shadow)",
+            "RAID ENGINE ONLINE — worker=%s lease=%s — 10 strategies registered (all paper; C8/C9 data-gated stubs)",
             config.WORKER_ID, "ACQUIRED" if _held else "PASSIVE",
         )
     else:

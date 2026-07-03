@@ -7,6 +7,7 @@ the `short` capability, so it stays shadow-only until shorting is operator-enabl
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
@@ -14,8 +15,33 @@ from raid.core.provider import CAP_SHORT, CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
 from raid.strategies.helpers import build_candidate
 
+log = logging.getLogger("raid.strategies.trend")
+
 CODE_VERSION = "omega-0.1.0"
 _PRIMARY_TF = "5m"
+# C1 breakout volume confirmation: the latest 5m bar must trade at >= this multiple of the
+# trailing 20-bar average volume (real breakouts expand volume). Cuts false breakouts.
+_VOLUME_CONFIRM_MULT = 1.5
+
+
+def _volume_confirmed(candles, mult: float = _VOLUME_CONFIRM_MULT) -> tuple[bool, float]:
+    """(confirmed, ratio) from the raw 5m candles ([...,volume] at index 5). Returns
+    (True, ratio) when the latest bar's volume >= mult x the prior-20 average; (True, 0.0)
+    when there isn't enough data to judge (don't block on missing data — prod always has it)."""
+    rows = candles or []
+    if len(rows) < 21:
+        return True, 0.0
+    try:
+        vols = [float(r[5]) for r in rows[-21:] if len(r) > 5]
+    except (TypeError, ValueError):
+        return True, 0.0
+    if len(vols) != 21:
+        return True, 0.0
+    avg = sum(vols[:-1]) / 20.0
+    if avg <= 0:
+        return True, 0.0
+    ratio = vols[-1] / avg
+    return ratio >= mult, ratio
 
 # Stop distance bounds (fraction of price) derived from ATR, clamped for sanity.
 _STOP_MIN = 0.006
@@ -46,6 +72,13 @@ class C1LongTrendBreakout(Strategy):
         # Actionable only when price is just below/at resistance (breakout imminent),
         # not already extended far above it.
         if not (resistance * 0.985 <= px <= resistance * 1.002):
+            return []
+        # Breakout volume confirmation — real breakouts expand volume. Uses the raw 5m
+        # candles already in ctx.extras (no new API call). Cuts C1's false breakouts.
+        confirmed, ratio = _volume_confirmed(ctx.extras.get("candles_5m"))
+        if not confirmed:
+            log.info("C1: skip %s — breakout volume %.1fx avg (need %.1fx)",
+                     ctx.symbol, ratio, _VOLUME_CONFIRM_MULT)
             return []
         trigger = resistance * 1.001            # confirm the breakout
         stop_dist = _atr_stop_dist(f.atr_pct)
