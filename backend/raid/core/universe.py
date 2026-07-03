@@ -66,6 +66,14 @@ def within_cooldown(last_iso, now_iso, hours: float) -> bool:
     return (now - last).total_seconds() < hours * 3600.0
 
 
+def has_opposite(open_directions, direction: str) -> bool:
+    """True if an OPPOSITE-direction position is already open on the symbol (so a new
+    entry would hedge/net-out on one symbol — block it). Same-direction stacking returns
+    False (allowed). Pure + testable."""
+    opposite = "short" if direction in ("long", "yes") else "long"
+    return opposite in (open_directions or set())
+
+
 def _closes_vols(candles) -> tuple[list[float], list[float]]:
     closes, vols = [], []
     for c in candles or []:

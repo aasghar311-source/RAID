@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Optional
 
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
-from raid.core.provider import CAP_SPOT_LONG
+from raid.core.provider import CAP_SHORT, CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
 from raid.strategies.helpers import build_candidate
 
@@ -72,6 +72,32 @@ def _long_market_candidate(strategy_id: str, ctx: StrategyContext) -> Optional[C
         reference_price=px, stop_price=stop, targets=(target,),
         expiry_ts=ctx.extras.get("expiry_ts", ctx.timestamp),
         capability_requirements=(CAP_SPOT_LONG,), min_net_rr=_MIN_NET_RR,
+    )
+
+
+def _short_market_candidate(strategy_id: str, ctx: StrategyContext) -> Optional[Candidate]:
+    """Build a risk-sized short MARKET candidate at the live price: stop ABOVE entry, target
+    BELOW. Mirror of _long_market_candidate. Returns None if uneconomic/missing features."""
+    f5 = ctx.feature("5m")
+    if f5 is None:
+        return None
+    px = float(ctx.reference_price)
+    if px <= 0:
+        return None
+    stop_dist = _atr_stop_dist(f5.atr_pct)
+    stop = px * (1 + stop_dist)          # short stop ABOVE entry
+    risk = stop - px
+    if risk <= 0:
+        return None
+    target = px - _RR_TARGET * risk       # short target BELOW entry
+    if target <= 0:
+        return None
+    return build_candidate(
+        strategy_id=strategy_id, strategy_version=CODE_VERSION, code_version=CODE_VERSION,
+        ctx=ctx, direction=Direction.SHORT, entry_type=EntryType.MARKET, timeframe=_SETUP_TF,
+        reference_price=px, stop_price=stop, targets=(target,),
+        expiry_ts=ctx.extras.get("expiry_ts", ctx.timestamp),
+        capability_requirements=(CAP_SHORT,), min_net_rr=_MIN_NET_RR,
     )
 
 
@@ -132,8 +158,15 @@ class C7CrossSectionalMomentum(Strategy):
             c = _long_market_candidate(self.strategy_id, ctx)
             return [c] if c else []
 
-        # Bottom quintile → SHORT candidate, SHADOW only (no shorts until margin on).
+        # Bottom quintile → SHORT the relative laggard. Booked when the short capability is
+        # granted AND the name is genuinely falling (return_24h < 0); otherwise shadow-logged
+        # (don't short a name that's merely a weak member of a rising universe).
         if me["rank"] > n - quintile:
+            if _already_open(ctx):
+                return []                                  # hold; don't stack
+            if CAP_SHORT in ctx.capabilities and me["return_24h"] < 0:
+                c = _short_market_candidate(self.strategy_id, ctx)
+                return [c] if c else []
             ctx.extras.setdefault("_c7_shadow_shorts", []).append({
                 "symbol": ctx.symbol, "rank": me["rank"], "n": n,
                 "return_24h": me["return_24h"], "risk_adj_momentum": me["risk_adj_momentum"],

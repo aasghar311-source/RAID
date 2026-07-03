@@ -7,8 +7,11 @@ fabricate signals, each declines (returns []) and records the precise missing
 dependency. They never trade paper capital in this state.
 
 C6, C7 and C10 previously lived here; they have been activated to paper (real logic in
-raid/strategies/rotation.py and raid/strategies/sweep.py). C8 (needs short capability)
-and C9 (needs futures/margin) remain honest scaffolding until their contract is met.
+raid/strategies/rotation.py and raid/strategies/sweep.py). As of 2026-07-03 C8 and C9 are
+also REGISTERED as paper (margin/futures were enabled on the account, satisfying their
+capability gate) but remain DATA-GATED stubs: they still return [] and produce 0 candidates
+until their two-leg contract is built (cointegration spreads for C8; a spot-vs-perp carry
+execution model for C9). This is honest scaffolding — enabled, but making no fake signals.
 """
 
 from __future__ import annotations

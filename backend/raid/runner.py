@@ -29,11 +29,11 @@ import gate
 from signals import Signal
 
 from raid.core import features as F
-from raid.core.provider import CAP_SPOT_LONG
+from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier
 from raid.core.strategy import StrategyContext, StrategyMode
-from raid.core.universe import compute_universe_rankings, parse_strategy_tag, within_cooldown
+from raid.core.universe import compute_universe_rankings, has_opposite, parse_strategy_tag, within_cooldown
 from raid.strategies.catalog import build_default_registry
 from raid.strategies.rotation import C6_REBALANCE_HOURS
 
@@ -45,10 +45,15 @@ log = logging.getLogger("raid.runner")
 # C1 quarantined 2026-07-03 (removed from the paper set) — 11% win rate (1/9), -$14.98 over
 # the 124-trade review (false-breakout machine). REVERSIBLE: move "RAID-C1" back here and
 # drop it from _QUARANTINED to re-activate.
-_PAPER_ON_CUTOVER = ("RAID-C2", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10")
+# 2026-07-03: C3 (shorts), C8 (pairs), C9 (carry) promoted to paper after margin/futures were
+# enabled on the account (1x leverage, paper). C8/C9 are data-gated stubs — registered paper
+# but produce 0 candidates until their two-leg data/execution contract is built.
+_PAPER_ON_CUTOVER = ("RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C8", "RAID-C9", "RAID-C10")
 _QUARANTINED = {"RAID-C1": "11% win rate over 9 trades, pending review"}
 _RISK = PortfolioRiskManager(RiskTier.INITIAL)   # Tier 1: 0.5% risk/trade at cutover
-_CAPABILITIES = frozenset({CAP_SPOT_LONG})       # spot long only in paper
+# Margin + futures verified on the Kraken account (1x leverage only, paper). Granting SHORT
+# (C3/C7-short/C8), FUTURES + MARGIN (C9) so their is_eligible capability gate passes.
+_CAPABILITIES = frozenset({CAP_SPOT_LONG, CAP_SHORT, CAP_MARGIN, CAP_FUTURES})
 
 # C6 rotation-out: close a C6 position only once its symbol falls past this rank
 # (hysteresis vs the top-5 entry band, so we don't churn on a one-rank wobble). Guarded
@@ -72,6 +77,12 @@ def build_cutover_registry():
 
 
 _REGISTRY = build_cutover_registry()
+
+# Startup notices for the strategies enabled 2026-07-03 (margin/futures verified on account).
+log.info("RAID-C3 enabled — short trend breakdown (margin verified)")
+log.info("C7 shorts enabled — cross-sectional momentum short sleeve active")
+log.info("RAID-C8 enabled — statistical pairs (data-gated: produces candidates only when cointegration data available)")
+log.info("RAID-C9 enabled — funding carry (data-gated: needs two-leg perp/spot execution; funding rates are available)")
 
 
 def _rotation_pnl(direction: str, entry: float, exit_price: float, size_usd: float) -> float:
@@ -140,6 +151,7 @@ def _context(sr, equity: float, ts: str, shared: dict | None = None):
     extras["candles_5m"] = sr.ohlcv
     extras["candles_15m"] = sr.ohlcv_15m
     extras["order_book"] = sr.order_book
+    extras["funding_rate"] = getattr(sr, "funding_rate", 0.0)   # wired for C9 (funding carry)
     return StrategyContext(
         symbol=sr.symbol, instrument_id=sr.symbol, timestamp=ts,
         market_regime=classify(feats["5m"]).regime, features=feats,
@@ -239,6 +251,12 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
 
     deployed = sum(float(t.get("size_usd") or 0) for t in open_trades)
     open_symbols = {t.get("symbol") for t in open_trades if t.get("symbol")}
+    # Per-symbol open directions for opposite-direction protection (block hedging one symbol).
+    open_dirs_by_symbol: dict[str, set] = {}
+    for t in open_trades:
+        _s, _d = t.get("symbol"), t.get("direction")
+        if _s and _d:
+            open_dirs_by_symbol.setdefault(_s, set()).add(_d)
     shared = {
         "universe_rankings": rankings,
         "open_symbols": open_symbols,
@@ -314,6 +332,24 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("RAID ENGINE: dedupe %s — keep %s(rr=%s), drop %s",
                      sr.symbol, symbol_cands[0][0].strategy_id, symbol_cands[0][1].net_rr, _dropped)
         strat, c = symbol_cands[0]
+
+        # Opposite-direction protection: never open a short into an open long (or vice versa)
+        # on the same symbol. Same-direction stacking is allowed.
+        if has_opposite(open_dirs_by_symbol.get(sr.symbol, set()), c.direction.value):
+            log.info("RAID ENGINE: skip %s %s — opposite-direction position already open",
+                     sr.symbol, c.direction.value)
+            continue
+
+        # Booking-geometry guard: the runner books at reference_price, but STOP/LIMIT-entry
+        # strategies anchor stop/target to a trigger/limit that can differ from px. Reject a
+        # candidate whose stop/target land on the wrong side of the ACTUAL book price (which
+        # would instant-stop or instant-TP) — matters most for shorts (stop can end below px).
+        _epx, _sl, _tp = float(c.reference_price), float(c.stop_price), float(c.targets[0])
+        _valid = (_sl < _epx < _tp) if c.direction.value == "long" else (_tp < _epx < _sl)
+        if not _valid:
+            log.info("RAID ENGINE: skip %s %s — degenerate geometry at book price (px=%.6f sl=%.6f tp=%.6f)",
+                     sr.symbol, c.direction.value, _epx, _sl, _tp)
+            continue
 
         # Risk-size, gate, and book the single winning candidate.
         state = PortfolioState(Decimal(str(equity)), Decimal(str(peak)))

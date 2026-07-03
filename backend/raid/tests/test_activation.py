@@ -12,7 +12,7 @@ from scanner import _cache_fresh, _refresh_due
 from raid.core.candidate import Direction, MarketRegime
 from raid.core.features import FeatureSnapshot
 from raid.core.microstructure import detect_liquidity_sweep
-from raid.core.provider import CAP_SPOT_LONG
+from raid.core.provider import CAP_SHORT, CAP_SPOT_LONG
 from raid.core.strategy import StrategyContext
 from raid.core.universe import compute_universe_rankings, parse_strategy_tag, within_cooldown
 from raid.execution.time_stops import (
@@ -267,7 +267,9 @@ def test_c1_quarantined_and_absent_from_paper():
     assert "RAID-C1" in reg.ids()                       # still registered (reversible)
     paper_ids = {s.strategy_id for s in reg.paper()}
     assert "RAID-C1" not in paper_ids                   # never booked
-    assert paper_ids == {"RAID-C2", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10"}
+    # 2026-07-03: C3/C8/C9 enabled -> 9 paper strategies (all except quarantined C1).
+    assert paper_ids == {"RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5", "RAID-C6",
+                         "RAID-C7", "RAID-C8", "RAID-C9", "RAID-C10"}
 
 
 # ── FIX 2: no-progress exit (production predicate) ───────────────────────────
@@ -356,6 +358,78 @@ def test_regime_cleanup_runs_each_cycle():
     scans = [_cycle_scan(f"S{k}USD") for k in range(3)]
     asyncio.run(run_strategy_cycle(scans, db, {}))
     assert db.cleanup_calls == [48]   # called once per cycle, at the start, with 48h retention
+
+
+# ── ENABLE ALL STRATEGIES: shorts (C3, C7), pairs/carry (C8/C9), opposite-dir ──
+
+def test_c3_generates_short_with_correct_geometry():
+    from raid.strategies.trend import C3ShortTrendBreakdown
+    feat = _feat("5m", last_price=100.0, swing_low=100.0, swing_high=110.0,
+                 ema20=99.0, ema50=101.0, atr_pct=0.01)
+    ctx = _ctx(MarketRegime.TREND_DOWN, features={"5m": feat}, caps=frozenset({CAP_SHORT}))
+    cands = C3ShortTrendBreakdown().generate_candidates(ctx)
+    assert len(cands) == 1
+    c = cands[0]
+    assert c.direction == Direction.SHORT and c.strategy_id == "RAID-C3"
+    assert float(c.stop_price) > float(c.reference_price)   # short SL ABOVE entry
+    assert float(c.targets[0]) < float(c.reference_price)   # short TP BELOW entry
+
+
+def test_c7_books_short_when_capability_granted():
+    from raid.strategies.rotation import C7CrossSectionalMomentum
+    c7 = C7CrossSectionalMomentum()
+    ranks = {"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}}
+    # CAP_SHORT granted + falling name -> books a short.
+    ctx = _ctx(MarketRegime.RANGE, extras=ranks, caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
+    cands = c7.generate_candidates(ctx)
+    assert len(cands) == 1 and cands[0].direction == Direction.SHORT and cands[0].strategy_id == "RAID-C7"
+    # No CAP_SHORT -> shadow-logged only, no candidate.
+    ctx2 = _ctx(MarketRegime.RANGE, extras={"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}},
+                caps=frozenset({CAP_SPOT_LONG}))
+    assert c7.generate_candidates(ctx2) == []
+    assert ctx2.extras.get("_c7_shadow_shorts")
+
+
+def test_opposite_direction_protection():
+    from raid.core.universe import has_opposite
+    assert has_opposite({"long"}, "short") is True     # short blocked when a long is open
+    assert has_opposite({"short"}, "long") is True      # long blocked when a short is open
+    assert has_opposite({"short"}, "short") is False    # same-direction stacking allowed
+    assert has_opposite(set(), "short") is False
+
+
+class _CaptureDB:
+    """Captures the SL persisted by update_trailing_stop (mocks the supabase chain)."""
+    def __init__(self):
+        self.persisted_sl = None
+        self.supabase = self
+
+    def table(self, name): return self
+    def update(self, d): self._sl = d.get("sl"); return self
+    def eq(self, k, v): return self
+    async def execute(self): self.persisted_sl = self._sl; return None
+
+
+def test_executor_short_sl_tp_hit():
+    from executor import _sl_tp_hit
+    assert _sl_tp_hit("short", 102.0, 102.0, 95.0) == "stop_loss"    # price >= sl (SL above entry)
+    assert _sl_tp_hit("short", 95.0, 102.0, 95.0) == "take_profit"   # price <= tp (TP below entry)
+    assert _sl_tp_hit("short", 99.0, 102.0, 95.0) is None
+
+
+def test_executor_short_pnl():
+    from executor import compute_pnl
+    assert compute_pnl("short", 100.0, 95.0, 200.0) > 0     # exit below entry -> profit
+    assert compute_pnl("short", 100.0, 105.0, 200.0) < 0    # exit above entry -> loss
+
+
+def test_executor_short_trail_moves_down():
+    from executor import update_trailing_stop
+    db = _CaptureDB()
+    # Short entry 100, price fell to 97 (+3% for a short) -> trail locks SL BELOW entry.
+    trade = {"id": "x", "direction": "short", "entry_price": 100.0, "sl": 102.0, "symbol": "T"}
+    asyncio.run(update_trailing_stop(trade, 97.0, db))
+    assert db.persisted_sl is not None and db.persisted_sl < 100.0   # moved DOWN, not up
 
 
 # ── regression: a full book must NOT blank out regime logging ────────────────
