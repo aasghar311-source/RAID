@@ -1,6 +1,7 @@
 """RAID executor — position sizing, SL/TP, trailing stops, entry, and open-trade monitoring."""
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -81,6 +82,23 @@ def compute_pnl(direction: str, entry: float, exit_price: float, size_usd: float
     return gross_pnl - fee_cost
 
 
+def price_too_stale(age_seconds) -> bool:
+    """True if a price is too old to act on at an exit decision (fail-closed guard).
+    age_seconds is how long ago the price was fetched; None means unknown -> treat fresh."""
+    return age_seconds is not None and age_seconds > config.STALE_PRICE_SECONDS
+
+
+def fill_slippage_pct(direction: str, stop, fill, entry) -> float:
+    """Signed % of entry by which an exit filled BEYOND its stop. Negative = the fill was
+    WORSE than the stop (price gapped through it between samples); ~0 = filled at the stop.
+    Diagnostic only — quantifies trailing-stop slippage on real closes."""
+    if not entry or entry <= 0 or stop is None or fill is None:
+        return 0.0
+    if direction in ("long", "yes"):
+        return (fill - stop) / entry * 100.0   # fill below stop -> negative
+    return (stop - fill) / entry * 100.0        # short: fill above stop -> negative
+
+
 async def update_trailing_stop(trade: dict, current_price: float, db):
     """Ratchet a trade's stop toward profit once it moves in favor; persist if changed.
     Late trail: single 85% lock once +1.5% (config.TRAIL_TRIGGER_PCT) is reached.
@@ -107,7 +125,8 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             if current_sl is None or new_sl > current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
-                log.info("TRAIL: %s lock 85%% at +%.2f%% — new SL %.6f", symbol, gain * 100, new_sl)
+                log.info("TRAIL: %s lock 85%% peak_gain=+%.2f%% price=%.6f -> trail_stop %.6f",
+                         symbol, gain * 100, current_price, new_sl)
         elif short_like:
             gain = (entry - current_price) / entry
             if gain < config.TRAIL_TRIGGER_PCT:
@@ -120,7 +139,8 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             if current_sl is None or new_sl < current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
-                log.info("TRAIL: %s lock 85%% at +%.2f%% — new SL %.6f", symbol, gain * 100, new_sl)
+                log.info("TRAIL: %s lock 85%% peak_gain=+%.2f%% price=%.6f -> trail_stop %.6f",
+                         symbol, gain * 100, current_price, new_sl)
     except Exception as exc:  # noqa: BLE001
         log.error("update_trailing_stop failed: %s", exc)
 
@@ -254,11 +274,26 @@ async def monitor_positions(db):
         t["symbol"] for t in open_trades if t.get("market") == "crypto" and t.get("symbol")
     ]
     crypto_prices = await scanner.fetch_kraken_prices(crypto_symbols) if crypto_symbols else {}
+    # Monotonic stamp of when the batch was fetched. A trade processed late in a slow loop
+    # ages relative to this; see the staleness guard below.
+    _prices_fetched_at = time.monotonic()
 
     for trade in open_trades:
         try:
             price = await _current_price_for_trade(trade, crypto_prices)
             if price is None or price <= 0:
+                continue
+
+            # Age of the price actually used: batch-sourced crypto prices age with the loop's
+            # sequential processing time; a single-fetch fallback is fetched fresh here (~0s).
+            # Fail closed — never trail or stop on a price that has gone stale (Rule: fail closed).
+            _from_batch = trade.get("symbol") in crypto_prices
+            price_age = (time.monotonic() - _prices_fetched_at) if _from_batch else 0.0
+            if price_too_stale(price_age):
+                log.warning(
+                    "STALE PRICE: %s %s age=%.1fs > %ds — skipping exit checks this tick (fail closed)",
+                    trade.get("market"), trade.get("symbol"), price_age, config.STALE_PRICE_SECONDS,
+                )
                 continue
 
             # Peak tracking (instrumentation only — records high-water profit %
@@ -301,6 +336,17 @@ async def monitor_positions(db):
                 pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
                 await db.close_trade(trade["id"], price, pnl, close_reason)
                 log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], close_reason, pnl)
+                # Trailing-stop forensics: quantify how far the fill slipped past the trailed
+                # stop and how old the price was. Negative slip = filled worse than the stop
+                # (price gapped through it between 1s samples); large price_age = loop starvation.
+                # This is the evidence artifact for the "trail locked below the peak" report.
+                if close_reason == "trailing_stop":
+                    log.info(
+                        "TRAIL EXIT %s %s: stop=%.6f fill=%.6f slip=%.3f%% peak=%.2f%% price_age=%.1fs pnl=$%.2f",
+                        trade.get("market"), trade.get("symbol"), sl, price,
+                        fill_slippage_pct(direction, sl, price, entry),
+                        float(trade.get("peak_pnl_pct") or 0.0), price_age, pnl,
+                    )
                 continue
 
             # C10 liquidity-sweep fast time stop (90m). Sweeps resolve quickly, so a

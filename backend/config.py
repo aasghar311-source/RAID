@@ -95,6 +95,13 @@ PENDING_SIGNAL_EXPIRY_MIN = 5   # unused by the deterministic engine; aligned to
 
 # --- Scan / exit cadence --------------------------------------------------
 LOOP_SLEEP_SECONDS    = 1     # exit monitor always runs at 1-second resolution
+# Fail-closed staleness guard: the exit monitor batches all crypto prices ONCE per tick
+# then processes trades sequentially, so a trade late in a slow (starved) loop can act on
+# a batch price that is already seconds old. If the price used for an exit decision is
+# older than this, skip that trade's exit checks this tick and log — never trail or stop
+# on stale data (Omega rule: fail closed). 30s >> the 1s loop, so this is a safety net,
+# not a normal-path behavior change.
+STALE_PRICE_SECONDS   = 30
 CONSECUTIVE_LOSS_LOOKBACK = 50
 # Post-close per-symbol cooldown: at 5-min cycles, block re-entering a symbol for this many
 # minutes after a trade on it closes (prevents churning the same stale setup). 15m = 3 cycles.
