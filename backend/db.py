@@ -47,6 +47,34 @@ async def _fetch_all(table: str, columns: str, eq_filters=None, page_size: int =
     return rows
 
 
+async def try_claim_lease(row_id: int, worker_id: str, now_iso: str, new_expiry_iso: str) -> bool:
+    """Atomic compare-and-set claim of the single worker-lease row. Returns True iff
+    THIS worker now holds it (row-level atomic UPDATE). Fail-OPEN (True) if the
+    worker_leases table is absent — the single-worker paper default; a missing lock
+    must never halt paper trading."""
+    try:
+        res = await (
+            supabase.table("worker_leases")
+            .update({"holder_id": worker_id, "expires_at": new_expiry_iso, "updated_at": now_iso})
+            .eq("id", row_id)
+            .or_(f"holder_id.is.null,expires_at.lt.{now_iso},holder_id.eq.{worker_id}")
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("try_claim_lease unavailable (%s) — single-worker fail-open", exc)
+        return True
+
+
+async def get_lease(row_id: int = 1):
+    """Return the current lease row dict, or None if unavailable."""
+    try:
+        res = await supabase.table("worker_leases").select("*").eq("id", row_id).limit(1).execute()
+        return res.data[0] if res.data else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 _EXPECTED_TABLES = (
     "trades",
     "equity_snapshots",

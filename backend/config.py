@@ -28,6 +28,13 @@ SUPERSONIC_TARGET      = 1_000_000.0
 # a passive time trigger. Do not re-add LIVE_DATE / BOT_LIVE_DATE.
 PAPER_MODE             = True
 
+# --- Engine cutover -------------------------------------------------------
+# The deterministic raid/ engine (typed candidates, 10 strategies, risk manager)
+# replaces the legacy LLM brain path. Set False for an IMMEDIATE emergency rollback
+# to the old brain — both paths remain in the codebase until Phase-7 deep cleanup.
+USE_NEW_ENGINE         = True   # False = revert to legacy brain path
+WORKER_ID              = os.getenv("RAILWAY_REPLICA_ID") or os.getenv("HOSTNAME") or "worker-1"
+
 # --- Brain / cycle --------------------------------------------------------
 BRAIN_CYCLE_MINUTES    = 30
 MAX_OPEN_TRADES        = 60

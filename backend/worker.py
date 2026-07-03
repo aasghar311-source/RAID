@@ -232,6 +232,14 @@ async def _run_brain_cycle(db_, controls: dict):
             log.warning("WORKER: scan_kraken returned no results")
             return
 
+        if config.USE_NEW_ENGINE:
+            log.info("RAID ENGINE: strategy cycle start (deterministic, %d symbols)", len(scan_results))
+            from raid import runner as raid_runner
+            await raid_runner.run_strategy_cycle(scan_results, db_, controls)
+            return
+
+        # ── LEGACY ENGINE (LLM brain path — emergency rollback via USE_NEW_ENGINE=False) ──
+        log.info("LEGACY ENGINE: brain cycle start")
         symbols = [r.symbol for r in scan_results]
         news_by_symbol = await scanner.scan_news(symbols)
         for r in scan_results:
@@ -674,6 +682,16 @@ async def main():
     server = await start_health_server()
     persisted = await db.get_spend_today()
     brain.set_daily_spend(persisted)
+
+    if config.USE_NEW_ENGINE:
+        from raid import runner as raid_runner
+        _held = await raid_runner._hold_lease(db)
+        log.info(
+            "RAID ENGINE ONLINE — worker=%s lease=%s — 10 strategies registered (C1/C2/C4/C5 paper, rest shadow)",
+            config.WORKER_ID, "ACQUIRED" if _held else "PASSIVE",
+        )
+    else:
+        log.info("LEGACY ENGINE ONLINE — brain path active (USE_NEW_ENGINE=False)")
 
     tasks = [
         asyncio.create_task(_exit_monitor_loop(db), name="exit_monitor"),
