@@ -140,46 +140,74 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             continue
         regime_tally[ctx.market_regime.value] = regime_tally.get(ctx.market_regime.value, 0) + 1
 
+        # (a) Persist the per-symbol regime so the Regimes dashboard populates.
+        # market=symbol (regime_log has no symbol column); detected_at is DB-defaulted.
+        _f5 = ctx.feature("5m")
+        await db.log_regime({
+            "market": sr.symbol,
+            "regime": ctx.market_regime.value,
+            "reasoning": f"{ctx.market_regime.value} (raid engine)",
+            "confidence": None,
+            "vol_30d": (_f5.realized_vol if _f5 else None),
+            "trajectory": None,
+        })
+
+        # Collect candidates from every eligible paper strategy for this symbol.
+        symbol_cands = []
         for strat in paper_strats:
             if not strat.is_eligible(ctx):
                 continue
             for c in strat.generate_candidates(ctx):
-                state = PortfolioState(Decimal(str(equity)), Decimal(str(peak)))
-                decision = _RISK.assess(state, c.reference_price, c.stop_price)
-                if not decision.approved:
-                    log.info("RAID ENGINE: risk reject %s %s — %s", sr.symbol, strat.strategy_id, decision.reason)
-                    continue
-                notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * equity)
-                if notional < 10 or deployed + notional > equity * config.MAX_EQUITY_DEPLOYED_PCT:
-                    continue
+                symbol_cands.append((strat, c))
+        if not symbol_cands:
+            continue
 
-                sig = Signal(
-                    market="crypto", symbol=sr.symbol, direction=c.direction.value, confidence=0.0,
-                    technical_score=0.0, news_sentiment="neutral", news_headline="", news_boost=0.0,
-                    macro_blocked=False, block_reason="", scan_result=sr,
-                )
-                g = await gate.check_gate(sig, db)
-                if not g.passed:
-                    log.info("RAID ENGINE: gate reject %s — %s", sr.symbol, g.reason)
-                    continue
+        # (b) Per-symbol per-cycle dedupe: keep the single highest net_rr candidate
+        # so two strategies agreeing on one symbol never double-book it.
+        if len(symbol_cands) > 1:
+            symbol_cands.sort(key=lambda sc: float(sc[1].net_rr), reverse=True)
+            _dropped = [f"{s.strategy_id}(rr={c.net_rr})" for s, c in symbol_cands[1:]]
+            log.info("RAID ENGINE: dedupe %s — keep %s(rr=%s), drop %s",
+                     sr.symbol, symbol_cands[0][0].strategy_id, symbol_cands[0][1].net_rr, _dropped)
+        strat, c = symbol_cands[0]
 
-                trade = {
-                    "bot_name": config.BOT_NAME, "market": "crypto", "symbol": sr.symbol,
-                    "direction": c.direction.value, "entry_price": float(c.reference_price),
-                    "exit_price": None, "size_usd": round(notional, 2), "confidence": None,
-                    "pnl": 0, "status": "open", "close_reason": None, "paper_mode": config.PAPER_MODE,
-                    "sl": float(c.stop_price), "tp": float(c.targets[0]),
-                    "instrument_type": "crypto", "market_regime": ctx.market_regime.value,
-                    "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} :: {strat.explain_decision(c, ctx)}"[:1000],
-                    "predicted_prob": None, "kelly_fraction": None,
-                }
-                tid = await db.log_trade(trade)
-                if tid:
-                    booked += 1
-                    deployed += notional
-                    log.info("RAID ENGINE: booked %s %s %s $%.2f sl=%.6f tp=%.6f net_rr=%s",
-                             strat.strategy_id, sr.symbol, c.direction.value, notional,
-                             float(c.stop_price), float(c.targets[0]), c.net_rr)
+        # Risk-size, gate, and book the single winning candidate.
+        state = PortfolioState(Decimal(str(equity)), Decimal(str(peak)))
+        decision = _RISK.assess(state, c.reference_price, c.stop_price)
+        if not decision.approved:
+            log.info("RAID ENGINE: risk reject %s %s — %s", sr.symbol, strat.strategy_id, decision.reason)
+            continue
+        notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * equity)
+        if notional < 10 or deployed + notional > equity * config.MAX_EQUITY_DEPLOYED_PCT:
+            continue
+
+        sig = Signal(
+            market="crypto", symbol=sr.symbol, direction=c.direction.value, confidence=0.0,
+            technical_score=0.0, news_sentiment="neutral", news_headline="", news_boost=0.0,
+            macro_blocked=False, block_reason="", scan_result=sr,
+        )
+        g = await gate.check_gate(sig, db)
+        if not g.passed:
+            log.info("RAID ENGINE: gate reject %s — %s", sr.symbol, g.reason)
+            continue
+
+        trade = {
+            "bot_name": config.BOT_NAME, "market": "crypto", "symbol": sr.symbol,
+            "direction": c.direction.value, "entry_price": float(c.reference_price),
+            "exit_price": None, "size_usd": round(notional, 2), "confidence": None,
+            "pnl": 0, "status": "open", "close_reason": None, "paper_mode": config.PAPER_MODE,
+            "sl": float(c.stop_price), "tp": float(c.targets[0]),
+            "instrument_type": "crypto", "market_regime": ctx.market_regime.value,
+            "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} :: {strat.explain_decision(c, ctx)}"[:1000],
+            "predicted_prob": None, "kelly_fraction": None,
+        }
+        tid = await db.log_trade(trade)
+        if tid:
+            booked += 1
+            deployed += notional
+            log.info("RAID ENGINE: booked %s %s %s $%.2f sl=%.6f tp=%.6f net_rr=%s",
+                     strat.strategy_id, sr.symbol, c.direction.value, notional,
+                     float(c.stop_price), float(c.targets[0]), c.net_rr)
 
     log.info("RAID ENGINE: cycle complete — booked %d (regimes: %s)", booked, regime_tally or "none")
     return booked
