@@ -36,7 +36,10 @@ USE_NEW_ENGINE         = True   # False = revert to legacy brain path
 WORKER_ID              = os.getenv("RAILWAY_REPLICA_ID") or os.getenv("HOSTNAME") or "worker-1"
 
 # --- Brain / cycle --------------------------------------------------------
-BRAIN_CYCLE_MINUTES    = 30
+# 5-minute strategy cycle — deterministic engine, zero API cost, so faster cycles = more
+# opportunities. NOTE: operator_controls.brain_cycle_minutes OVERRIDES this at runtime;
+# the worker syncs the DB to this value at startup (see worker.main).
+BRAIN_CYCLE_MINUTES    = 5
 MAX_OPEN_TRADES        = 60
 MAX_ENTRIES_PER_CYCLE  = 30
 CLAUDE_DAILY_BUDGET_USD = 7.0
@@ -74,11 +77,14 @@ OPTIONS_ENABLED    = False
 COMMODITIES_ENABLED = False
 
 PENDING_SIGNALS_ENABLED = False
-PENDING_SIGNAL_EXPIRY_MIN = 20
+PENDING_SIGNAL_EXPIRY_MIN = 5   # unused by the deterministic engine; aligned to the 5-min cycle for the dashboard
 
 # --- Scan / exit cadence --------------------------------------------------
 LOOP_SLEEP_SECONDS    = 1     # exit monitor always runs at 1-second resolution
 CONSECUTIVE_LOSS_LOOKBACK = 50
+# Post-close per-symbol cooldown: at 5-min cycles, block re-entering a symbol for this many
+# minutes after a trade on it closes (prevents churning the same stale setup). 15m = 3 cycles.
+SYMBOL_COOLDOWN_MINUTES = 15
 
 # --- Macro event handling -------------------------------------------------
 MACRO_PAUSE_MINUTES_BEFORE = 30
@@ -138,6 +144,7 @@ KRAKEN_QUOTES         = ("ZUSD", "USD")
 MIN_24H_USD_VOLUME    = 1_000_000
 KRAKEN_TICKER_CHUNK   = 200
 KALSHI_CLOSE_WITHIN_HOURS = 24
+NEWS_ENABLED          = False   # CryptoCompare disabled (rate-limited); deterministic engine uses no news
 NEWS_LOOKBACK_HOURS   = 2
 NEWS_TOP_N            = 3
 HTTP_TIMEOUT          = 20.0

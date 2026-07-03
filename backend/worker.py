@@ -672,6 +672,20 @@ async def main():
 
     await db.create_tables()
 
+    # Sync the strategy cadence to config (5-min cycles). operator_controls.brain_cycle_minutes
+    # OVERRIDES config at runtime, so without this the stale DB value would keep the old cadence.
+    # Idempotent (only writes when different); the dashboard can still change it live afterward.
+    try:
+        _oc = await db.get_operator_controls()
+        if int(_oc.get("brain_cycle_minutes") or 0) != config.BRAIN_CYCLE_MINUTES:
+            if await db.update_operator_controls({"brain_cycle_minutes": config.BRAIN_CYCLE_MINUTES}):
+                log.info("CYCLE: synced operator_controls.brain_cycle_minutes -> %d min", config.BRAIN_CYCLE_MINUTES)
+    except Exception as exc:  # noqa: BLE001
+        log.error("cycle-time sync failed: %s", exc)
+
+    if not getattr(config, "NEWS_ENABLED", True):
+        log.info("NEWS: CryptoCompare disabled (rate-limited)")
+
     log.info(
         "RAID ONLINE — %s — %s MODE — Equity: $%.2f",
         datetime.now(timezone.utc).isoformat(),

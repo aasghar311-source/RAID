@@ -152,10 +152,11 @@ def _context(sr, equity: float, ts: str, shared: dict | None = None):
 async def _hold_lease(db) -> bool:
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
-    expiry_iso = now.replace(microsecond=0).isoformat()
-    # Renew/acquire with a 60s TTL.
     from datetime import timedelta
-    new_expiry = (now + timedelta(seconds=60)).isoformat()
+    # TTL = 3x the cycle cadence so the lease survives up to 2 missed cycles before another
+    # worker can claim it (renewed at the start of every cycle). 5-min cycles -> 15-min TTL.
+    ttl_seconds = 3 * config.BRAIN_CYCLE_MINUTES * 60
+    new_expiry = (now + timedelta(seconds=ttl_seconds)).isoformat()
     return await db.try_claim_lease(1, config.WORKER_ID, now_iso, new_expiry)
 
 
@@ -196,6 +197,15 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         log.warning("RAID ENGINE: another worker holds the lease — running passive (no bookings)")
         return 0
 
+    # Regime-log rotation: trim rows older than 48h at cycle START (before this cycle's
+    # writes) so the table stays bounded at 5-min cadence (~7k rows/day otherwise).
+    try:
+        _deleted = await db.cleanup_regime_log(48)
+        if _deleted:
+            log.info("REGIME CLEANUP: deleted %d rows older than 48h", _deleted)
+    except Exception as exc:  # noqa: BLE001
+        log.error("RAID ENGINE: regime cleanup failed: %s", exc)
+
     equity = float(await db.get_equity() or config.STARTING_EQUITY)
     open_trades = await db.get_open_trades()
     max_open = int(controls.get("max_open_trades") or config.MAX_OPEN_TRADES)
@@ -210,11 +220,15 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     # rebalance throttle; the open-symbol set prevents C6/C7 from stacking a name.
     recent_closed = await db.get_closed_trades_last_n(50)
     last_entry: dict[str, str] = {}
+    last_close_by_symbol: dict[str, str] = {}   # for the post-close per-symbol cooldown
     for t in list(open_trades) + list(recent_closed):
         tag = parse_strategy_tag(t.get("claude_reasoning"))
         ot = t.get("open_time")
         if tag and ot and str(ot) > last_entry.get(tag, ""):
             last_entry[tag] = str(ot)
+        sym, ct = t.get("symbol"), t.get("close_time")   # open trades have close_time=None
+        if sym and ct and str(ct) > last_close_by_symbol.get(sym, ""):
+            last_close_by_symbol[sym] = str(ct)
     c6_rebalance_ok = not within_cooldown(last_entry.get("RAID-C6"), ts, C6_REBALANCE_HOURS)
 
     # --- C6 rotation-out (throttled + guarded) BEFORE new entries ---
@@ -264,6 +278,13 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         if len(open_trades) + booked >= max_open or booked >= config.MAX_ENTRIES_PER_CYCLE:
             continue
         if deployed >= equity * config.MAX_EQUITY_DEPLOYED_PCT:
+            continue
+
+        # (c) Post-close per-symbol cooldown: at 5-min cadence, don't immediately re-enter a
+        # symbol we just closed on (prevents churning the same stale setup). Wall-clock based.
+        _last_close = last_close_by_symbol.get(sr.symbol)
+        if _last_close and within_cooldown(_last_close, ts, config.SYMBOL_COOLDOWN_MINUTES / 60.0):
+            log.info("COOLDOWN: skip %s — trade closed within %dm", sr.symbol, config.SYMBOL_COOLDOWN_MINUTES)
             continue
 
         # Collect candidates from every eligible paper strategy for this symbol.

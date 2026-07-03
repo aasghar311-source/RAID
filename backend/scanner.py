@@ -1,5 +1,6 @@
 """RAID scanner — async market data from Kraken, Kalshi, NewsAPI, plus a macro calendar."""
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -70,6 +71,62 @@ class ScanResult:
 def _now_iso():
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+# ── Timeframe-aware OHLCV cache (5-min cycles: stay under Kraken rate limits) ──
+# 5m refreshes every cycle, 15m every 3rd, 30m every 6th, 1h every 12th; a cold entry
+# always fetches. Cuts avg OHLCV calls/cycle from ~96 to ~38. The cache is transparent to
+# the runner — every ScanResult still carries all four timeframes each cycle.
+_TF_REFRESH_CYCLES = {"5m": 1, "15m": 3, "30m": 6, "1h": 12}
+_ohlcv_cache: dict = {}          # {symbol: {tf_key: (rows, fetched_at)}}
+_cycle_counter = 0
+_CALL_PACING_SECONDS = 0.15      # await between live Kraken calls to stay under the rate limit
+
+
+def _refresh_due(tf_key: str, cycle: int, cold: bool) -> bool:
+    """Whether a timeframe should re-fetch this cycle (pure, testable)."""
+    if cold:
+        return True
+    return cycle % _TF_REFRESH_CYCLES.get(tf_key, 1) == 0
+
+
+async def _fetch_ohlcv_cached(client, altname: str, interval: int, tf_key: str, candle_limit: int):
+    """Return [ts,o,h,l,c,vol] rows for a timeframe, honoring the refresh schedule + cache.
+    Never raises — returns cached rows (or []) on failure. Paces live calls."""
+    cold = tf_key not in _ohlcv_cache.get(altname, {})
+    if not _refresh_due(tf_key, _cycle_counter, cold):
+        return _ohlcv_cache[altname][tf_key][0]
+    try:
+        res = await client.get(f"{KRAKEN_BASE}/OHLC", params={"pair": altname, "interval": interval})
+        result = res.json().get("result", {})
+        rows: list = []
+        for k, v in result.items():
+            if k == "last":
+                continue
+            rows = [[c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])] for c in v[-candle_limit:]]
+            break
+        _ohlcv_cache.setdefault(altname, {})[tf_key] = (rows, datetime.now(timezone.utc))
+        await asyncio.sleep(_CALL_PACING_SECONDS)
+        return rows
+    except Exception as exc:  # noqa: BLE001
+        cached = _ohlcv_cache.get(altname, {}).get(tf_key)
+        if cached:
+            log.warning("OHLC %s %s fetch failed (%s) — using cached", altname, tf_key, exc)
+            return cached[0]
+        log.error("OHLC %s %s fetch failed, no cache: %s", altname, tf_key, exc)
+        return []
+
+
+def _cache_fresh(fetched_at, now, ttl_minutes: float) -> bool:
+    """True iff `fetched_at` is within ttl_minutes of `now` (pure, testable)."""
+    if fetched_at is None:
+        return False
+    return (now - fetched_at).total_seconds() < ttl_minutes * 60
+
+
+# Fear & Greed cache (30-min refresh — alternative.me updates ~hourly).
+_fg_cache = {"value": None, "fetched_at": None}
+_FG_CACHE_MINUTES = 30
 
 
 # Kraken Futures symbol (PF_XBTUSD) -> Kraken Spot altname (XBTUSD) mapping
@@ -160,8 +217,14 @@ LAST_FEAR_GREED = 50
 async def fetch_fear_greed() -> int:
     """Fetch Crypto Fear & Greed Index from Alternative.me (free, no key needed).
     Returns value 0-100 (0=extreme fear, 100=extreme greed), or 50 (neutral) on error.
-    One call per brain cycle — global market sentiment, not per-symbol."""
+    Cached 30 min (the index updates ~hourly) so 5-min cycles don't get rate-limited."""
     global LAST_FEAR_GREED
+    now = datetime.now(timezone.utc)
+    if _fg_cache["value"] is not None and _cache_fresh(_fg_cache["fetched_at"], now, _FG_CACHE_MINUTES):
+        age_m = int((now - _fg_cache["fetched_at"]).total_seconds() / 60)
+        log.info("F&G: cached (%d, fetched %dm ago)", _fg_cache["value"], age_m)
+        LAST_FEAR_GREED = _fg_cache["value"]
+        return _fg_cache["value"]
     try:
         async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
             res = await client.get("https://api.alternative.me/fng/")
@@ -169,6 +232,8 @@ async def fetch_fear_greed() -> int:
             if data:
                 val = int(data[0].get("value", 50))
                 LAST_FEAR_GREED = val
+                _fg_cache["value"] = val
+                _fg_cache["fetched_at"] = now
                 log.info("FEAR_GREED: index=%d", val)
                 return val
     except Exception as exc:  # noqa: BLE001
@@ -178,6 +243,10 @@ async def fetch_fear_greed() -> int:
 
 async def scan_kraken():
     """Scan liquid Kraken USD pairs and return a ScanResult per pair (never raises)."""
+    global _cycle_counter
+    _cycle_counter += 1
+    if _cycle_counter == 1:
+        log.info("SCANNER: timeframe cache enabled — 5m every cycle, 15m/3, 30m/6, 1h/12")
     # Pre-fetch funding rates + open interest once (separate Kraken Futures API — non-blocking on failure).
     funding_rates, oi_data = {}, {}
     try:
@@ -253,83 +322,20 @@ async def scan_kraken():
 
             for altname in liquid:
                 try:
-                    ohlc_res = await client.get(
-                        f"{KRAKEN_BASE}/OHLC",
-                        params={"pair": altname, "interval": config.KRAKEN_OHLC_INTERVAL},
-                    )
-                    ohlc_data = ohlc_res.json().get("result", {})
-                    candles = []
-                    for k, v in ohlc_data.items():
-                        if k == "last":
-                            continue
-                        candles = v
-                        break
-                    # Kraken OHLC row: [time, open, high, low, close, vwap, volume, count]
-                    ohlcv = [
-                        [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
-                        for c in candles[-config.OHLCV_CANDLES:]
-                    ]
+                    # Timeframe-aware cached OHLCV (5m every cycle; 15m/3, 30m/6, 1h/12).
+                    ohlcv = await _fetch_ohlcv_cached(client, altname, config.KRAKEN_OHLC_INTERVAL, "5m", config.OHLCV_CANDLES)
                     current = prices.get(altname)
                     if current is None and ohlcv:
                         current = ohlcv[-1][4]
-                    # Higher-timeframe (1h) candles for trend confirmation.
-                    ohlcv_1h = []
-                    try:
-                        h_res = await client.get(
-                            f"{KRAKEN_BASE}/OHLC",
-                            params={"pair": altname, "interval": 60},
-                        )
-                        h_data = h_res.json().get("result", {})
-                        for k, v in h_data.items():
-                            if k == "last":
-                                continue
-                            ohlcv_1h = [
-                                [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
-                                for c in v[-60:]
-                            ]
-                            break
-                    except Exception as exc:  # noqa: BLE001
-                        log.error("Kraken 1h OHLC failed for %s: %s", altname, exc)
-                    # Mid-timeframe (15m) candles for trend confirmation.
-                    ohlcv_15m = []
-                    try:
-                        m15_res = await client.get(
-                            f"{KRAKEN_BASE}/OHLC",
-                            params={"pair": altname, "interval": 15},
-                        )
-                        m15_data = m15_res.json().get("result", {})
-                        for k, v in m15_data.items():
-                            if k == "last":
-                                continue
-                            ohlcv_15m = [
-                                [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
-                                for c in v[-60:]
-                            ]
-                            break
-                    except Exception as exc:  # noqa: BLE001
-                        log.error("Kraken 15m OHLC failed for %s: %s", altname, exc)
-                    # Mid-timeframe (30m) candles for trend confirmation.
-                    ohlcv_30m = []
-                    try:
-                        m30_res = await client.get(
-                            f"{KRAKEN_BASE}/OHLC",
-                            params={"pair": altname, "interval": 30},
-                        )
-                        m30_data = m30_res.json().get("result", {})
-                        for k, v in m30_data.items():
-                            if k == "last":
-                                continue
-                            ohlcv_30m = [
-                                [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
-                                for c in v[-60:]
-                            ]
-                            break
-                    except Exception as exc:  # noqa: BLE001
-                        log.error("Kraken 30m OHLC failed for %s: %s", altname, exc)
-                    # Order book depth (reuses existing httpx client).
+                    ohlcv_1h = await _fetch_ohlcv_cached(client, altname, 60, "1h", 60)
+                    ohlcv_15m = await _fetch_ohlcv_cached(client, altname, 15, "15m", 60)
+                    ohlcv_30m = await _fetch_ohlcv_cached(client, altname, 30, "30m", 60)
+                    # Order book depth — fetched EVERY cycle (C10 sweep detection needs
+                    # current depth), not cached. Paced like the OHLCV calls.
                     order_book_data = {}
                     try:
                         order_book_data = await _fetch_order_book(client, altname)
+                        await asyncio.sleep(_CALL_PACING_SECONDS)
                     except Exception as exc:  # noqa: BLE001
                         log.error("Order book fetch failed for %s: %s", altname, exc)
                     results.append(
@@ -350,7 +356,7 @@ async def scan_kraken():
                         )
                     )
                 except Exception as exc:  # noqa: BLE001
-                    log.error("Kraken OHLC failed for %s: %s", altname, exc)
+                    log.error("Kraken scan failed for %s: %s", altname, exc)
                     continue
     except Exception as exc:  # noqa: BLE001
         log.error("scan_kraken failed: %s", exc)
@@ -425,6 +431,8 @@ async def scan_news(symbols: list):
     # Default all symbols to neutral/no-news
     for sym in symbols:
         out[sym] = {"headline": None, "sentiment": "neutral", "published_at": None}
+    if not getattr(config, "NEWS_ENABLED", True):
+        return out   # CryptoCompare disabled (rate-limited); deterministic engine uses no news
     try:
         cc_key = os.environ.get("CRYPTOCOMPARE_API_KEY", "")
         headers = {"Authorization": f"Apikey {cc_key}"} if cc_key else {}

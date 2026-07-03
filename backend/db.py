@@ -516,6 +516,19 @@ async def log_regime(entry: dict):
         log.error("log_regime failed: %s", exc)
 
 
+async def cleanup_regime_log(hours: int = 48) -> int:
+    """Delete regime_log rows older than `hours`. Returns the number deleted (0 on failure
+    or if anon-key RLS blocks the delete — never raises). At 5-min cycles regime_log grows
+    ~7k rows/day, so this keeps it bounded (~14k rows at 48h retention)."""
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        res = await supabase.table("regime_log").delete().lt("detected_at", cutoff).execute()
+        return len(res.data or [])
+    except Exception as exc:  # noqa: BLE001
+        log.error("cleanup_regime_log failed: %s", exc)
+        return 0
+
+
 # ── PREDICTIONS ───────────────────────────────────────────────────────────
 
 async def log_prediction(entry: dict):

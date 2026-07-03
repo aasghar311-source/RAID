@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import config
+from scanner import _cache_fresh, _refresh_due
 from raid.core.candidate import Direction, MarketRegime
 from raid.core.features import FeatureSnapshot
 from raid.core.microstructure import detect_liquidity_sweep
@@ -316,6 +318,46 @@ def test_c4_rsi_ceiling_admits_neutral_rsi():
     assert c4.generate_candidates(_ctx(MarketRegime.RANGE, features={"5m": _c4_feat(55.0)})) == []
 
 
+# ── 5-MINUTE CYCLE changes ───────────────────────────────────────────────────
+
+def test_cycle_time_is_five_minutes():
+    assert config.BRAIN_CYCLE_MINUTES == 5
+
+
+def test_ohlcv_refresh_schedule():
+    # 5m refreshes every cycle; 15m only every 3rd; 1h every 12th; a cold entry always fetches.
+    assert _refresh_due("5m", 2, False) is True
+    assert _refresh_due("5m", 7, False) is True
+    assert _refresh_due("15m", 3, False) is True
+    assert _refresh_due("15m", 2, False) is False
+    assert _refresh_due("30m", 6, False) is True
+    assert _refresh_due("30m", 5, False) is False
+    assert _refresh_due("1h", 12, False) is True
+    assert _refresh_due("1h", 6, False) is False
+    assert _refresh_due("1h", 5, True) is True          # cold → always fetch
+
+
+def test_fg_cache_freshness():
+    now = datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc)
+    assert _cache_fresh(now - timedelta(minutes=10), now, 30) is True     # within 30m
+    assert _cache_fresh(now - timedelta(minutes=40), now, 30) is False    # older than 30m
+    assert _cache_fresh(None, now, 30) is False
+
+
+def test_symbol_cooldown_15min():
+    # 15 min = 0.25h. Re-entry blocked within the window, allowed after it.
+    assert within_cooldown("2026-07-03T00:00:00+00:00", "2026-07-03T00:10:00+00:00", 15 / 60.0) is True
+    assert within_cooldown("2026-07-03T00:00:00+00:00", "2026-07-03T00:20:00+00:00", 15 / 60.0) is False
+
+
+def test_regime_cleanup_runs_each_cycle():
+    from raid.runner import run_strategy_cycle
+    db = _FullBookDB([])
+    scans = [_cycle_scan(f"S{k}USD") for k in range(3)]
+    asyncio.run(run_strategy_cycle(scans, db, {}))
+    assert db.cleanup_calls == [48]   # called once per cycle, at the start, with 48h retention
+
+
 # ── regression: a full book must NOT blank out regime logging ────────────────
 
 def _cycle_scan(sym):
@@ -336,6 +378,7 @@ class _FullBookDB:
         self._open = open_trades
         self.regimes = []
         self.trades = []
+        self.cleanup_calls = []
 
     async def try_claim_lease(self, *a): return True
     async def get_equity(self): return 4000.0
@@ -347,6 +390,7 @@ class _FullBookDB:
     async def log_regime(self, e): self.regimes.append(e)
     async def log_trade(self, t): self.trades.append(t); return f"f{len(self.trades)}"
     async def close_trade(self, *a): pass
+    async def cleanup_regime_log(self, hours): self.cleanup_calls.append(hours); return 0
 
 
 def test_full_book_still_logs_regimes():
