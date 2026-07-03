@@ -7,8 +7,15 @@ only owns the DECISION layer: data -> features -> regime -> strategies -> typed
 candidate -> risk-sized -> gated -> booked paper trade.
 
 Booking model: a paper strategy fires only when its entry is actionable now (price
-already at resistance/support), so the candidate is booked at the reference price this
-cycle. A trigger-based fill via the state machine + fill simulator is a follow-up.
+already at resistance/support, or a market entry into a ranked/swept name), so the
+candidate is booked at the reference price this cycle. A trigger-based fill via the
+state machine + fill simulator is a follow-up.
+
+Cross-sectional strategies (C6 relative-strength rotation, C7 cross-sectional momentum)
+consume a universe ranking computed ONCE per cycle and threaded into every per-symbol
+context via extras. C10 (liquidity-sweep reversal) reads the raw 5m candles + order book
+from extras. C6 positions that fall off the leaderboard are rotated OUT on a throttled
+cadence. Nothing here sizes positions (the risk manager does) or trades non-spot-long.
 """
 
 from __future__ import annotations
@@ -26,15 +33,28 @@ from raid.core.provider import CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier
 from raid.core.strategy import StrategyContext, StrategyMode
+from raid.core.universe import compute_universe_rankings, parse_strategy_tag, within_cooldown
 from raid.strategies.catalog import build_default_registry
+from raid.strategies.rotation import C6_REBALANCE_HOURS
 
 log = logging.getLogger("raid.runner")
 
-# Strategies with real single-symbol logic run PAPER; the rest stay SHADOW until their
-# data/capability contract is met (promotion to PAPER is otherwise evidence-gated).
-_PAPER_ON_CUTOVER = ("RAID-C1", "RAID-C2", "RAID-C4", "RAID-C5")
+# Strategies with real logic run PAPER; the rest stay SHADOW until their data/capability
+# contract is met (promotion to PAPER is otherwise evidence-gated). C6/C7/C10 activated
+# with the universe-ranking + microstructure data contract.
+_PAPER_ON_CUTOVER = ("RAID-C1", "RAID-C2", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10")
 _RISK = PortfolioRiskManager(RiskTier.INITIAL)   # Tier 1: 0.5% risk/trade at cutover
 _CAPABILITIES = frozenset({CAP_SPOT_LONG})       # spot long only in paper
+
+# C6 rotation-out: close a C6 position only once its symbol falls past this rank
+# (hysteresis vs the top-5 entry band, so we don't churn on a one-rank wobble). Guarded
+# by a minimum ranked-universe size so a data gap never mass-closes the book.
+_C6_ROTATE_OUT_RANK = 8
+_MIN_RANKED_FOR_ROTATION = 12
+
+# Kraken round-trip taker fee (matches executor.compute_pnl); inlined so the runner
+# stays free of the executor->brain import chain.
+_TAKER_FEE_PCT = 0.0016
 
 
 def build_cutover_registry():
@@ -45,6 +65,18 @@ def build_cutover_registry():
 
 
 _REGISTRY = build_cutover_registry()
+
+
+def _rotation_pnl(direction: str, entry: float, exit_price: float, size_usd: float) -> float:
+    """Realized USD pnl net of Kraken round-trip fees — mirrors executor.compute_pnl."""
+    if not entry or entry <= 0:
+        return 0.0
+    fee_cost = size_usd * _TAKER_FEE_PCT * 2
+    if direction in ("long", "yes"):
+        gross = size_usd * (exit_price - entry) / entry
+    else:
+        gross = size_usd * (entry - exit_price) / entry
+    return gross - fee_cost
 
 
 def _series(candles):
@@ -78,7 +110,7 @@ def _spread_depth(order_book):
     return 0.0004, True
 
 
-def _context(sr, equity: float, ts: str):
+def _context(sr, equity: float, ts: str, shared: dict | None = None):
     _, _, closes5 = _series(sr.ohlcv)
     if len(closes5) < 30:
         return None
@@ -93,12 +125,20 @@ def _context(sr, equity: float, ts: str):
     px = Decimal(str(sr.current_price or feats["5m"].last_price))
     if px <= 0:
         return None
+    # Base per-symbol extras + the cross-cycle shared context (rankings, open symbols,
+    # rebalance gate) + the raw microstructure C10 needs.
+    extras = {"equity": float(equity), "risk_pct": 0.005, "expiry_ts": ts}
+    if shared:
+        extras.update(shared)
+    extras["candles_5m"] = sr.ohlcv
+    extras["candles_15m"] = sr.ohlcv_15m
+    extras["order_book"] = sr.order_book
     return StrategyContext(
         symbol=sr.symbol, instrument_id=sr.symbol, timestamp=ts,
         market_regime=classify(feats["5m"]).regime, features=feats,
         market_data_snapshot_id=f"{sr.symbol}-{ts}", reference_price=px,
         spread_pct=spread, depth_ok=depth_ok, capabilities=_CAPABILITIES,
-        extras={"equity": float(equity), "risk_pct": 0.005, "expiry_ts": ts},
+        extras=extras,
     )
 
 
@@ -112,6 +152,35 @@ async def _hold_lease(db) -> bool:
     return await db.try_claim_lease(1, config.WORKER_ID, now_iso, new_expiry)
 
 
+async def _rotate_c6_out(open_trades, rankings, scan_results, db, ts) -> set:
+    """Close RAID-C6 positions whose symbol has dropped off the leaderboard. Returns the
+    set of rotated trade ids. Guarded: only runs on a real ranked universe (never on a
+    data gap) and only closes a symbol that IS ranked but has clearly fallen out."""
+    rotated: set = set()
+    if len(rankings) < _MIN_RANKED_FOR_ROTATION:
+        return rotated
+    price_by_symbol = {sr.symbol: (sr.current_price or 0.0) for sr in scan_results}
+    keep = {s for s, r in rankings.items() if r["rank"] <= _C6_ROTATE_OUT_RANK}
+    for t in open_trades:
+        if parse_strategy_tag(t.get("claude_reasoning")) != "RAID-C6":
+            continue
+        sym = t.get("symbol")
+        r = rankings.get(sym)
+        if r is None or sym in keep:            # unranked (data gap) or still strong -> hold
+            continue
+        price = price_by_symbol.get(sym)
+        if not price or price <= 0:
+            continue
+        try:
+            pnl = _rotation_pnl(t.get("direction"), t.get("entry_price") or 0, price, t.get("size_usd") or 0)
+            await db.close_trade(t["id"], price, pnl, "c6_rotation")
+            rotated.add(t["id"])
+            log.info("RAID ENGINE: C6 rotate-out %s (rank=%s) pnl=$%.2f", sym, r["rank"], pnl)
+        except Exception as exc:  # noqa: BLE001
+            log.error("RAID ENGINE: C6 rotate-out failed for %s: %s", sym, exc)
+    return rotated
+
+
 async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     """One deterministic cycle. Returns the number of paper trades booked."""
     log.info("RAID ENGINE: strategy cycle start — %d symbols", len(scan_results))
@@ -122,20 +191,50 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
 
     equity = float(await db.get_equity() or config.STARTING_EQUITY)
     open_trades = await db.get_open_trades()
-    deployed = sum(float(t.get("size_usd") or 0) for t in open_trades)
     max_open = int(controls.get("max_open_trades") or config.MAX_OPEN_TRADES)
     peak = max(config.STARTING_EQUITY, equity)
     ts = datetime.now(timezone.utc).isoformat()
     paper_strats = _REGISTRY.paper()
 
+    # --- Cross-sectional universe ranking (computed ONCE per cycle) ---
+    rankings = compute_universe_rankings(scan_results)
+
+    # Per-strategy last-entry time (open + recently-closed trades) drives the C6
+    # rebalance throttle; the open-symbol set prevents C6/C7 from stacking a name.
+    recent_closed = await db.get_closed_trades_last_n(50)
+    last_entry: dict[str, str] = {}
+    for t in list(open_trades) + list(recent_closed):
+        tag = parse_strategy_tag(t.get("claude_reasoning"))
+        ot = t.get("open_time")
+        if tag and ot and str(ot) > last_entry.get(tag, ""):
+            last_entry[tag] = str(ot)
+    c6_rebalance_ok = not within_cooldown(last_entry.get("RAID-C6"), ts, C6_REBALANCE_HOURS)
+
+    # --- C6 rotation-out (throttled + guarded) BEFORE new entries ---
+    if c6_rebalance_ok:
+        rotated = await _rotate_c6_out(open_trades, rankings, scan_results, db, ts)
+        if rotated:
+            open_trades = [t for t in open_trades if t.get("id") not in rotated]
+
+    deployed = sum(float(t.get("size_usd") or 0) for t in open_trades)
+    open_symbols = {t.get("symbol") for t in open_trades if t.get("symbol")}
+    shared = {
+        "universe_rankings": rankings,
+        "open_symbols": open_symbols,
+        "c6_rebalance_ok": c6_rebalance_ok,
+        "strategy_last_entry": last_entry,
+    }
+
     booked = 0
     regime_tally: dict[str, int] = {}
+    produced_by: dict[str, int] = {}
+    shadow_tally = {"c7_shorts": 0, "c10_sweeps": 0, "c10_shadow": 0}
     for sr in scan_results:
         if len(open_trades) + booked >= max_open or booked >= config.MAX_ENTRIES_PER_CYCLE:
             break
         if deployed >= equity * config.MAX_EQUITY_DEPLOYED_PCT:
             break
-        ctx = _context(sr, equity, ts)
+        ctx = _context(sr, equity, ts, shared)
         if ctx is None:
             continue
         regime_tally[ctx.market_regime.value] = regime_tally.get(ctx.market_regime.value, 0) + 1
@@ -157,8 +256,17 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         for strat in paper_strats:
             if not strat.is_eligible(ctx):
                 continue
-            for c in strat.generate_candidates(ctx):
+            cands = strat.generate_candidates(ctx)
+            for c in cands:
                 symbol_cands.append((strat, c))
+            if cands:
+                produced_by[strat.strategy_id] = produced_by.get(strat.strategy_id, 0) + len(cands)
+
+        # Roll up shadow observations (C7 short flags, C10 detected sweeps) for logging.
+        shadow_tally["c7_shorts"] += len(ctx.extras.get("_c7_shadow_shorts", []))
+        shadow_tally["c10_sweeps"] += len(ctx.extras.get("_c10_sweeps", []))
+        shadow_tally["c10_shadow"] += len(ctx.extras.get("_c10_shadow", []))
+
         if not symbol_cands:
             continue
 
@@ -205,9 +313,15 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         if tid:
             booked += 1
             deployed += notional
+            open_symbols.add(sr.symbol)
             log.info("RAID ENGINE: booked %s %s %s $%.2f sl=%.6f tp=%.6f net_rr=%s",
                      strat.strategy_id, sr.symbol, c.direction.value, notional,
                      float(c.stop_price), float(c.targets[0]), c.net_rr)
 
-    log.info("RAID ENGINE: cycle complete — booked %d (regimes: %s)", booked, regime_tally or "none")
+    log.info(
+        "RAID ENGINE: cycle complete — booked %d (regimes: %s | produced: %s | "
+        "shadow: c7_shorts=%d c10_sweeps=%d c10_shadow=%d)",
+        booked, regime_tally or "none", produced_by or "none",
+        shadow_tally["c7_shorts"], shadow_tally["c10_sweeps"], shadow_tally["c10_shadow"],
+    )
     return booked

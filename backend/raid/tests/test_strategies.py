@@ -95,8 +95,10 @@ def test_c3_short_is_shadow_gated():
 
 
 def test_shadow_strategies_decline_cleanly():
+    # C6/C7/C10 were activated to paper; C8 (pairs/short) and C9 (futures/margin) remain
+    # shadow until their capability contract is met.
     reg = build_default_registry()
-    for sid in ("RAID-C6", "RAID-C7", "RAID-C8", "RAID-C9", "RAID-C10"):
+    for sid in ("RAID-C8", "RAID-C9"):
         s = reg.get(sid)
         ctx = _ctx(MarketRegime.TREND_UP, _feat())
         assert s.generate_candidates(ctx) == []

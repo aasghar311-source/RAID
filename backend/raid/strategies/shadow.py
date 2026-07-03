@@ -1,14 +1,14 @@
-"""Shadow-tier strategies (Section 8: C6–C10).
+"""Shadow-tier strategies still awaiting a data/capability contract: C8, C9.
 
 These conform fully to the Strategy interface and register, but their candidate
-generation requires inputs the single-symbol context / current data feeds do not yet
-provide. Rather than fabricate signals, each declines (returns []) and records the
-precise missing dependency. They advance to real logic when Phase-3 data (universe
-snapshots, cointegration series, funding/basis, order-book microstructure) lands and
-the relevant capability is enabled. They never trade paper capital in this state.
+generation requires inputs the current data feeds / capabilities do not yet provide
+(cointegration spreads for C8; real funding/basis series + margin for C9). Rather than
+fabricate signals, each declines (returns []) and records the precise missing
+dependency. They never trade paper capital in this state.
 
-This is honest scaffolding — the classes exist and are wired, but make NO claim to
-generate real edge until their data contract is satisfied.
+C6, C7 and C10 previously lived here; they have been activated to paper (real logic in
+raid/strategies/rotation.py and raid/strategies/sweep.py). C8 (needs short capability)
+and C9 (needs futures/margin) remain honest scaffolding until their contract is met.
 """
 
 from __future__ import annotations
@@ -37,22 +37,6 @@ class _ShadowStrategy(Strategy):
         return None
 
 
-class C6RelativeStrengthRotation(_ShadowStrategy):
-    strategy_id = "RAID-C6"
-    version = CODE_VERSION
-    required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.TREND_UP})
-    requires = "universe_snapshot with per-symbol risk-adjusted momentum + breadth (Phase 3)"
-
-
-class C7CrossSectionalMomentum(_ShadowStrategy):
-    strategy_id = "RAID-C7"
-    version = CODE_VERSION
-    required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.TREND_UP, MarketRegime.RANGE})
-    requires = "cross-sectional ranking over the full eligible universe + portfolio construction (Phase 3)"
-
-
 class C8StatisticalPairs(_ShadowStrategy):
     strategy_id = "RAID-C8"
     version = CODE_VERSION
@@ -67,11 +51,3 @@ class C9FundingBasisCarry(_ShadowStrategy):
     required_capabilities = frozenset({CAP_SPOT_LONG, CAP_FUTURES, CAP_MARGIN})
     eligible_regimes = frozenset({MarketRegime.RANGE, MarketRegime.TREND_UP, MarketRegime.TREND_DOWN})
     requires = "real funding/basis series + spot & hedge legs + borrow/margin model (Phase 3 + futures capability)"
-
-
-class C10LiquiditySweepReversal(_ShadowStrategy):
-    strategy_id = "RAID-C10"
-    version = CODE_VERSION
-    required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.VOLATILE, MarketRegime.CRISIS})
-    requires = "order-book depletion + rejection-wick microstructure with real depth history (Phase 3 live collection)"

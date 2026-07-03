@@ -9,6 +9,7 @@ import scanner
 import brain
 from signals import Signal
 from scanner import ScanResult
+from raid.execution.time_stops import c10_time_stop_due
 
 log = logging.getLogger("raid.executor")
 
@@ -298,6 +299,17 @@ async def monitor_positions(db):
                 pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
                 await db.close_trade(trade["id"], price, pnl, close_reason)
                 log.info("TRADE CLOSE %s %s reason=%s pnl=$%.2f", trade["market"], trade["symbol"], close_reason, pnl)
+                continue
+
+            # C10 liquidity-sweep fast time stop (90m). Sweeps resolve quickly, so a
+            # RAID-C10 position gets a far tighter cap than the 3h trend max-hold. The
+            # predicate is tag-scoped (see raid.execution.time_stops) so C1-C5 trades are
+            # never affected; it runs before the MAT checkpoints so it is never pre-empted.
+            if c10_time_stop_due(trade.get("claude_reasoning"), trade.get("open_time")):
+                pnl = compute_pnl(direction, entry, price, trade.get("size_usd") or 0)
+                await db.close_trade(trade["id"], price, pnl, "sweep_time_stop")
+                log.info("TRADE CLOSE %s %s reason=sweep_time_stop pnl=$%.2f",
+                         trade["market"], trade["symbol"], pnl)
                 continue
 
             # MAT (Matured Exit) system — time-based checkpoints.
