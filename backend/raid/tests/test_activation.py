@@ -2,6 +2,7 @@
 cross-sectional long strategies, the liquidity-sweep strategy, the C6 rebalance limiter,
 and the no-stacking (C7-vs-C6 dedupe) gate."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -247,3 +248,52 @@ def test_within_cooldown():
     assert within_cooldown("2026-07-02T00:00:00+00:00", "2026-07-02T01:00:00+00:00", 2.0) is True
     assert within_cooldown("2026-07-02T00:00:00+00:00", "2026-07-02T03:00:00+00:00", 2.0) is False
     assert within_cooldown(None, "2026-07-02T03:00:00+00:00", 2.0) is False
+
+
+# ── regression: a full book must NOT blank out regime logging ────────────────
+
+def _cycle_scan(sym):
+    from scanner import ScanResult
+    c5 = [[1_700_000_000 + i * 300, 100 + i * 0.1, 100 + i * 0.1 + 0.05, 100 + i * 0.1 - 0.05, 100 + i * 0.1, 20.0] for i in range(40)]
+    c1h = [[1_700_000_000 + i * 3600, 100 + i * 0.2, 100 + i * 0.2 + 0.1, 100 + i * 0.2 - 0.1, 100 + i * 0.2, 20.0] for i in range(40)]
+    last = c5[-1][4]
+    return ScanResult(
+        market="crypto", symbol=sym, ohlcv=c5, ohlcv_15m=c1h, ohlcv_30m=c1h, ohlcv_1h=c1h,
+        current_price=last, scan_time="2026-07-03T00:00:00+00:00",
+        order_book={"bid_walls": [{"price": last * 0.999, "usd": 5000.0}],
+                    "ask_walls": [{"price": last * 1.001, "usd": 3000.0}]},
+    )
+
+
+class _FullBookDB:
+    def __init__(self, open_trades):
+        self._open = open_trades
+        self.regimes = []
+        self.trades = []
+
+    async def try_claim_lease(self, *a): return True
+    async def get_equity(self): return 4000.0
+    async def get_open_trades(self): return list(self._open)
+    async def get_closed_trades_last_n(self, n): return []
+    async def get_open_trades_by_market(self, m): return []
+    async def get_kill_switch(self): return False
+    async def get_daily_stats(self, d): return {"pnl": 0}
+    async def log_regime(self, e): self.regimes.append(e)
+    async def log_trade(self, t): self.trades.append(t); return f"f{len(self.trades)}"
+    async def close_trade(self, *a): pass
+
+
+def test_full_book_still_logs_regimes():
+    # Reproduces the 2026-07-03 incident: the book at the 95% deployment cap
+    # (19 x $200 = $3800 of $4000) must still classify + log a regime for EVERY symbol,
+    # even though it (correctly) books no new trades. Before the fix the loop broke on
+    # the first symbol and logged zero regimes.
+    from raid.runner import run_strategy_cycle
+    full = [{"id": f"o{i}", "symbol": f"X{i}USD", "size_usd": 200.0, "direction": "long",
+             "claude_reasoning": "RAID-C2 limit net_rr=1.5 :: x",
+             "open_time": "2026-07-03T00:00:00+00:00"} for i in range(19)]
+    scans = [_cycle_scan(f"S{k}USD") for k in range(6)]
+    db = _FullBookDB(full)
+    booked = asyncio.run(run_strategy_cycle(scans, db, {}))
+    assert booked == 0, f"a 95%-deployed book must book no new trades, got {booked}"
+    assert len(db.regimes) == len(scans), f"regimes must be logged for all symbols when full, got {len(db.regimes)}"

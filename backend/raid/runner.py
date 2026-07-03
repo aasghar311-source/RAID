@@ -230,16 +230,16 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     produced_by: dict[str, int] = {}
     shadow_tally = {"c7_shorts": 0, "c10_sweeps": 0, "c10_shadow": 0}
     for sr in scan_results:
-        if len(open_trades) + booked >= max_open or booked >= config.MAX_ENTRIES_PER_CYCLE:
-            break
-        if deployed >= equity * config.MAX_EQUITY_DEPLOYED_PCT:
-            break
         ctx = _context(sr, equity, ts, shared)
         if ctx is None:
             continue
         regime_tally[ctx.market_regime.value] = regime_tally.get(ctx.market_regime.value, 0) + 1
 
-        # (a) Persist the per-symbol regime so the Regimes dashboard populates.
+        # (a) Persist the per-symbol regime so the Regimes dashboard populates. This is
+        # pure OBSERVABILITY and must run for EVERY symbol regardless of book capacity —
+        # a full/at-cap book must never blank out regime classification. (Previously the
+        # capacity checks below were `break`s ABOVE this line, so once the 95% deployment
+        # cap was hit the loop exited on the first symbol and logged zero regimes.)
         # market=symbol (regime_log has no symbol column); detected_at is DB-defaulted.
         _f5 = ctx.feature("5m")
         await db.log_regime({
@@ -250,6 +250,14 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             "vol_30d": (_f5.realized_vol if _f5 else None),
             "trajectory": None,
         })
+
+        # (b) Capacity gates apply to NEW ENTRIES only. Once the book is full or the 95%
+        # deployment cap is reached, skip booking but keep classifying the rest of the
+        # universe (continue, NOT break — so regime observability never goes dark).
+        if len(open_trades) + booked >= max_open or booked >= config.MAX_ENTRIES_PER_CYCLE:
+            continue
+        if deployed >= equity * config.MAX_EQUITY_DEPLOYED_PCT:
+            continue
 
         # Collect candidates from every eligible paper strategy for this symbol.
         symbol_cands = []
