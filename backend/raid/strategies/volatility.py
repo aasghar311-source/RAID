@@ -11,7 +11,7 @@ from typing import Optional
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.provider import CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
-from raid.strategies.helpers import build_candidate
+from raid.strategies.helpers import build_candidate, atr_scaled_stop_dist, rr_honest_target_dist
 
 CODE_VERSION = "omega-0.1.0"
 _TF = "5m"
@@ -45,9 +45,9 @@ class C5VolatilityExpansion(Strategy):
         if px > upper * 1.002:                   # already expanded — missed it
             return []
         trigger = upper * 1.001                  # breakout of the squeeze box
-        stop = trigger * (1 - max(f.atr_pct or 0.010, 0.010))   # >=1.0% risk (honest-gate geometry)
-        risk = trigger - stop
-        target = trigger + 4.0 * risk            # 4R -> ~1%/4%, nets ~1.45 after real 1.04% round-trip
+        stop_dist = atr_scaled_stop_dist(ctx, f.atr_pct)        # 1.5x 1h-ATR, bounded [0.6%,4%]
+        stop = trigger * (1 - stop_dist)
+        target = trigger * (1 + rr_honest_target_dist(stop_dist))   # TP scaled to net_rr 1.35 (honest)
         c = build_candidate(
             strategy_id=self.strategy_id, strategy_version=self.version, code_version=CODE_VERSION,
             ctx=ctx, direction=Direction.LONG, entry_type=EntryType.STOP, timeframe=_TF,

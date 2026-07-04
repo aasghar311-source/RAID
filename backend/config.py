@@ -133,6 +133,17 @@ STOP_LOSS_PCT      = 0.01     # 1.0% fixed SL — backtester Config I
 TAKE_PROFIT_PCT    = 0.04
 MAX_SL_DISTANCE_PCT = 0.01    # 1.0% fixed SL — backtester Config I (floor==ceiling, no band)
 MAX_TP_DISTANCE_PCT = 0.025   # 2.5% max TP distance — was avg 4.62%, 0/314 hit
+# ATR-scaled stop (replaces the flat clamp[1%,2%] on the ATR-based strategies). The stop must
+# clear the pair's normal 1h candle noise, which the old ~1% stop did NOT on volatile pairs
+# (measured: BONK 1% vs 2.4% ATR, PEPE 0.6% vs 2.3%). stop = 1.5x ATR%(14,1h), bounded so calm
+# pairs aren't unrealistically tight and a spiking-ATR pair can't make an enormous stop.
+ATR_STOP_MULT      = 1.5
+ATR_STOP_MIN       = 0.006    # 0.6% floor
+ATR_STOP_MAX       = 0.040    # 4.0% ceiling
+# TP scales off the per-pair stop to keep the entry gate HONEST after the real 1.04% round-trip:
+# tp_dist = RR_TARGET_NET*(stop + cost) + cost -> net_rr == RR_TARGET_NET (>= every min_net_rr
+# 1.20/1.25/1.30). RR is held at this honest target; the stop/TP DISTANCES vary per pair.
+RR_TARGET_NET      = 1.35
 KALSHI_SL_PCT      = 0.50
 KALSHI_TP_PRICE    = 0.95
 TRAIL_TRIGGER_PCT  = 0.015   # 1.5% — late trail, insurance only. TP at 2.5% is primary exit

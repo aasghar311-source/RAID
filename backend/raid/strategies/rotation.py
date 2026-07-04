@@ -24,23 +24,17 @@ from typing import Optional
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.provider import CAP_SHORT, CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
-from raid.strategies.helpers import build_candidate
+from raid.strategies.helpers import build_candidate, atr_scaled_stop_dist, rr_honest_target_dist
 
 CODE_VERSION = "omega-0.2.0"
 _SETUP_TF = "1h"          # ranking horizon = hourly
-_STOP_MIN = 0.010        # floor at 1.0% so a 4R target lands ~1%/4% and clears the honest gate
-_STOP_MAX = 0.020
-_RR_TARGET = 4.0         # gross reward = 4x gross risk -> ~1%/4%, nets ~1.45 R:R after real 1.04% round-trip
 _MIN_NET_RR = 1.20
 _MIN_TREND_QUALITY = 0.15  # R^2 floor — rank on a real move, not noise
+# C6/C7 size the stop off the 1h ATR via helpers.atr_scaled_stop_dist (1.5x, bounded [0.6%,4%])
+# and set the TP via rr_honest_target_dist — no local flat-floor constants anymore.
 
 C6_TOP_N = 5              # C6 only rotates into the top-5
 C6_REBALANCE_HOURS = 2.0  # throttle: no new C6 entry within this window
-
-
-def _atr_stop_dist(atr_pct: Optional[float]) -> float:
-    base = atr_pct if atr_pct is not None else _STOP_MIN
-    return min(max(base, _STOP_MIN), _STOP_MAX)
 
 
 def _rankings(ctx: StrategyContext) -> dict:
@@ -60,12 +54,12 @@ def _long_market_candidate(strategy_id: str, ctx: StrategyContext) -> Optional[C
     px = float(ctx.reference_price)
     if px <= 0:
         return None
-    stop_dist = _atr_stop_dist(f5.atr_pct)
+    stop_dist = atr_scaled_stop_dist(ctx, f5.atr_pct)     # 1.5x 1h-ATR, bounded [0.6%,4%]
     stop = px * (1 - stop_dist)
     risk = px - stop
     if risk <= 0:
         return None
-    target = px + _RR_TARGET * risk
+    target = px * (1 + rr_honest_target_dist(stop_dist))  # TP scaled to net_rr 1.35 (honest)
     return build_candidate(
         strategy_id=strategy_id, strategy_version=CODE_VERSION, code_version=CODE_VERSION,
         ctx=ctx, direction=Direction.LONG, entry_type=EntryType.MARKET, timeframe=_SETUP_TF,
@@ -84,12 +78,12 @@ def _short_market_candidate(strategy_id: str, ctx: StrategyContext) -> Optional[
     px = float(ctx.reference_price)
     if px <= 0:
         return None
-    stop_dist = _atr_stop_dist(f5.atr_pct)
+    stop_dist = atr_scaled_stop_dist(ctx, f5.atr_pct)     # 1.5x 1h-ATR, bounded [0.6%,4%]
     stop = px * (1 + stop_dist)          # short stop ABOVE entry
     risk = stop - px
     if risk <= 0:
         return None
-    target = px - _RR_TARGET * risk       # short target BELOW entry
+    target = px * (1 - rr_honest_target_dist(stop_dist))  # short target BELOW entry (net_rr 1.35)
     if target <= 0:
         return None
     return build_candidate(

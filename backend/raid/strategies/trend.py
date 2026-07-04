@@ -13,7 +13,7 @@ from typing import Optional
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.provider import CAP_SHORT, CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
-from raid.strategies.helpers import build_candidate
+from raid.strategies.helpers import build_candidate, atr_scaled_stop_dist, rr_honest_target_dist
 
 log = logging.getLogger("raid.strategies.trend")
 
@@ -43,18 +43,11 @@ def _volume_confirmed(candles, mult: float = _VOLUME_CONFIRM_MULT) -> tuple[bool
     ratio = vols[-1] / avg
     return ratio >= mult, ratio
 
-# Stop distance bounds (fraction of price) derived from ATR, clamped for sanity. Floor at
-# 1.0% so the 4R target lands the ~1%/4% geometry the honest gate is calibrated to (a 4R
-# target only clears net_rr 1.20 at real 1.04% cost when risk >= ~0.82%).
-_STOP_MIN = 0.010
-_STOP_MAX = 0.020
-_RR_TARGET = 4.0            # gross reward = 4x gross risk -> ~1%/4%, nets ~1.45 R:R after real 1.04% round-trip
+# C1/C3 now size the stop off the 1h ATR via helpers.atr_scaled_stop_dist (1.5x, bounded
+# [0.6%,4%]) and set the TP via rr_honest_target_dist. _RR_TARGET is retained only for C2, whose
+# stop is STRUCTURAL (swing-low/ema20), not the flat ATR floor.
+_RR_TARGET = 4.0           # C2 structural-stop target multiple (gross reward = 4x gross risk)
 _MIN_NET_RR = 1.25
-
-
-def _atr_stop_dist(atr_pct: Optional[float]) -> float:
-    base = atr_pct if atr_pct is not None else _STOP_MIN
-    return min(max(base, _STOP_MIN), _STOP_MAX)
 
 
 class C1LongTrendBreakout(Strategy):
@@ -83,10 +76,9 @@ class C1LongTrendBreakout(Strategy):
                      ctx.symbol, ratio, _VOLUME_CONFIRM_MULT)
             return []
         trigger = resistance * 1.001            # confirm the breakout
-        stop_dist = _atr_stop_dist(f.atr_pct)
+        stop_dist = atr_scaled_stop_dist(ctx, f.atr_pct)            # 1.5x 1h-ATR, bounded [0.6%,4%]
         stop = trigger * (1 - stop_dist)
-        risk = trigger - stop
-        target = trigger + _RR_TARGET * risk
+        target = trigger * (1 + rr_honest_target_dist(stop_dist))   # TP scaled to net_rr 1.35 (honest)
         c = build_candidate(
             strategy_id=self.strategy_id, strategy_version=self.version, code_version=CODE_VERSION,
             ctx=ctx, direction=Direction.LONG, entry_type=EntryType.STOP, timeframe=_PRIMARY_TF,
@@ -157,10 +149,9 @@ class C3ShortTrendBreakdown(Strategy):
         if not (support * 0.998 <= px <= support * 1.015):
             return []
         trigger = support * 0.999                # confirm the breakdown
-        stop_dist = _atr_stop_dist(f.atr_pct)
+        stop_dist = atr_scaled_stop_dist(ctx, f.atr_pct)            # 1.5x 1h-ATR, bounded [0.6%,4%]
         stop = trigger * (1 + stop_dist)
-        risk = stop - trigger
-        target = trigger - _RR_TARGET * risk
+        target = trigger * (1 - rr_honest_target_dist(stop_dist))   # TP scaled to net_rr 1.35 (honest)
         if target <= 0:
             return []
         c = build_candidate(

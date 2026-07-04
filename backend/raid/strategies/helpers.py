@@ -11,10 +11,31 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import config
 import costs  # backend/costs.py — authoritative cost model
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.risk import position_size
 from raid.core.strategy import StrategyContext
+
+
+def atr_scaled_stop_dist(ctx: StrategyContext, fallback_atr_pct=None) -> float:
+    """Stop distance (fraction of price) = ATR_STOP_MULT (1.5) x the 1h ATR%(14), bounded to
+    [ATR_STOP_MIN, ATR_STOP_MAX] ([0.6%, 4%]). The 1h ATR is the noise a stop must survive over a
+    multi-hour hold — the old flat ~1% stop was tighter than a normal 1h candle on volatile pairs.
+    Falls back to the signal-TF ATR, then the floor, if the 1h feature is missing (fail safe)."""
+    f1h = ctx.feature("1h")
+    atr = (f1h.atr_pct if (f1h is not None and f1h.atr_pct) else fallback_atr_pct) or 0.0
+    # clamp handles the no-ATR case: 1.5*0 -> max(_, MIN) = the 0.6% floor.
+    return min(max(config.ATR_STOP_MULT * float(atr), config.ATR_STOP_MIN), config.ATR_STOP_MAX)
+
+
+def rr_honest_target_dist(stop_dist: float, target_net_rr: float | None = None) -> float:
+    """TP distance (fraction) that makes net_rr == target after the REAL round-trip cost, given
+    the stop: (tp - c)/(stop + c) = target  ->  tp = target*(stop + c) + c. Keeps the gate honest
+    (>= min_net_rr) while the stop/TP distances scale per-pair with ATR. Default target = 1.35."""
+    c = costs.realized_round_trip_cost_pct()
+    tgt = config.RR_TARGET_NET if target_net_rr is None else target_net_rr
+    return tgt * (float(stop_dist) + c) + c
 
 
 def _d(x) -> Decimal:
