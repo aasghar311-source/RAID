@@ -33,7 +33,6 @@ from raid.core import features as F
 from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier
-from raid.core.circuit import should_auto_pause
 from raid.core.strategy import StrategyContext, StrategyMode
 from raid.core.universe import (
     capped_leverage, compute_universe_rankings, concentration_reject_reason, has_opposite,
@@ -264,33 +263,10 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     ts = datetime.now(timezone.utc).isoformat()
     paper_strats = _REGISTRY.paper()
 
-    # Consecutive-loss circuit breaker: once the streak hits config.CONSECUTIVE_LOSS_PAUSE,
-    # auto-pause NEW entries (set operator_controls.pause_entries + stamp operator_note so
-    # worker._maybe_auto_resume can distinguish this pause from a manual one). Existing
-    # positions keep being monitored/exited by the 1s exit loop. Book nothing this cycle.
-    try:
-        consec = await db.get_consecutive_losses()
-        # Only query the last-loss time when a streak actually exists (avoids a DB round-trip
-        # every cycle). Recency gates the pause so a STALE streak can't flip-flop the bot.
-        mins_since_loss = None
-        if consec >= config.CONSECUTIVE_LOSS_PAUSE:
-            last_loss = await db.get_last_loss_time()
-            if last_loss is not None:
-                mins_since_loss = (datetime.now(timezone.utc) - last_loss).total_seconds() / 60.0
-        if should_auto_pause(consec, config.CONSECUTIVE_LOSS_PAUSE, bool(controls.get("pause_entries")),
-                             mins_since_loss, config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES):
-            note = f"{config.AUTO_PAUSE_NOTE_PREFIX} {consec} losses @ {ts}"
-            await db.update_operator_controls({"pause_entries": True, "operator_note": note})
-            log.warning(
-                "RAID ENGINE: consecutive-loss circuit breaker — %d losses >= %d, last loss %.0f min "
-                "ago; auto-pausing NEW entries (monitoring continues, auto-resumes %d min after the "
-                "burst breaks).",
-                consec, config.CONSECUTIVE_LOSS_PAUSE, mins_since_loss or 0.0,
-                config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES,
-            )
-            return 0
-    except Exception as exc:  # noqa: BLE001
-        log.error("RAID ENGINE: consecutive-loss circuit-breaker check failed: %s", exc)
+    # (Commit E) The consecutive-loss auto-pause was REMOVED — the bot must not freeze on a
+    # normal loss streak. The remaining automated backstops are the drawdown de-risk ladder
+    # (_effective_leverage below: 6%->2x, 10%->1x, 15%->pause, 20%->shutdown) and the manual
+    # kill_switch (honored by worker._brain_entry_gate). The consec-loss ALERT still fires.
 
     # --- Leverage + drawdown de-risking (peak high-water mark) ---
     global _peak_equity

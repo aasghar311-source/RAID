@@ -82,15 +82,11 @@ OPERATOR_TZ = "America/Chicago"
 
 # --- Risk limits ----------------------------------------------------------
 DAILY_LOSS_LIMIT_PCT          = 0.10
-CONSECUTIVE_LOSS_PAUSE        = 3
+CONSECUTIVE_LOSS_PAUSE        = 3   # threshold for the consec-loss ALERT (not a pause anymore)
 CONSECUTIVE_LOSS_PAUSE_MINUTES = 60
-# Consecutive-loss circuit breaker (auto-pause). When get_consecutive_losses() reaches
-# CONSECUTIVE_LOSS_PAUSE, the runner sets operator_controls.pause_entries and stamps
-# operator_note with AUTO_PAUSE_NOTE_PREFIX so the auto-resume can tell its own pause from a
-# manual one. worker._maybe_auto_resume clears it once this many minutes have elapsed since
-# the most recent losing close (burst broken). INITIAL value — calibrate after the 24h run.
-CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES = 30
-AUTO_PAUSE_NOTE_PREFIX        = "AUTO_PAUSE:consec_loss"
+# (Commit E) The consecutive-loss AUTO-PAUSE was removed — the bot must not freeze on a normal
+# loss streak. The only automated backstops now are the drawdown de-risk ladder (below) and the
+# manual kill_switch. The consec-loss alert still fires at CONSECUTIVE_LOSS_PAUSE.
 KALSHI_MAX_OPEN               = 4
 
 # --- Concentration caps (open-time gate, NOT a sizing change) -------------
