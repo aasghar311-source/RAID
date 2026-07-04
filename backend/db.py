@@ -225,21 +225,33 @@ async def log_trade(trade: dict):
     return ""
 
 
-async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str):
-    """Mark a trade closed with exit price, realized pnl, close time, and reason."""
+async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str, extra: dict | None = None):
+    """Mark a trade closed with exit price, realized pnl, close time, and reason.
+
+    Also records hold_minutes centrally (best-effort — a failed read never blocks the close),
+    so every close path gets it without touching the 11 call sites. `extra` merges optional
+    instrumentation fields (e.g. regime_at_exit) in the SAME atomic update."""
+    fields = {
+        "status": "closed",
+        "exit_price": exit_price,
+        "pnl": pnl,
+        "close_time": _now_iso(),
+        "close_reason": reason,
+    }
     try:
-        await (
-            supabase.table("trades")
-            .update({
-                "status": "closed",
-                "exit_price": exit_price,
-                "pnl": pnl,
-                "close_time": _now_iso(),
-                "close_reason": reason,
-            })
-            .eq("id", trade_id)
-            .execute()
-        )
+        _row = supabase.table("trades").select("open_time").eq("id", trade_id).limit(1).execute()
+        _ot = (_row.data[0].get("open_time") if _row and _row.data else None)
+        if _ot:
+            _o = datetime.fromisoformat(str(_ot).replace("Z", "+00:00"))
+            if _o.tzinfo is None:
+                _o = _o.replace(tzinfo=timezone.utc)
+            fields["hold_minutes"] = round((datetime.now(timezone.utc) - _o).total_seconds() / 60.0, 2)
+    except Exception:  # noqa: BLE001 — instrumentation must never block a close
+        pass
+    if extra:
+        fields.update(extra)
+    try:
+        await supabase.table("trades").update(fields).eq("id", trade_id).execute()
     except Exception as exc:  # noqa: BLE001
         log.error("close_trade failed: %s", exc)
 

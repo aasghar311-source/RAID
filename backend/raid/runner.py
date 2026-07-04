@@ -474,6 +474,19 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("RAID ENGINE: gate reject %s — %s", sr.symbol, g.reason)
             continue
 
+        # Instrumentation (Commit 1) — clean immutable risk anchor + entry ATR + conviction
+        # inputs, captured once at open. initial_stop_price is NEVER rewritten by the trail
+        # (which only mutates `sl`), so it is the clean R denominator for later analysis.
+        # entry_atr_pct is the 1h ATR (the atr_scaled_stop basis); NULL if the 1h feature is
+        # absent. All are additive columns (migration 003) and change no entry/exit/sizing.
+        _f5, _f1h = ctx.feature("5m"), ctx.feature("1h")
+        _entry_atr = float(_f1h.atr_pct) if (_f1h is not None and _f1h.atr_pct) else None
+        _init_stop_dist = abs(_epx - _sl) / _epx if _epx > 0 else None
+        _ema20_dist = ((_epx - _f5.ema20) / _f5.ema20) if (_f5 is not None and _f5.ema20) else None
+        _ema50_dist = ((_epx - _f5.ema50) / _f5.ema50) if (_f5 is not None and _f5.ema50) else None
+        _entry_slope = (_f5.trend_slope if _f5 is not None else None)
+        _vol_ratio = F.volume_ratio(ctx.extras.get("candles_5m"))
+
         trade = {
             "bot_name": config.BOT_NAME, "market": "crypto", "symbol": sr.symbol,
             "direction": c.direction.value, "entry_price": float(c.reference_price),
@@ -483,6 +496,9 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             "instrument_type": "crypto", "market_regime": ctx.market_regime.value,
             "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} lev={pair_lev}x margin={margin:.2f} :: {strat.explain_decision(c, ctx)}"[:1000],
             "predicted_prob": None, "kelly_fraction": None,
+            "initial_stop_price": float(c.stop_price), "initial_stop_distance_pct": _init_stop_dist,
+            "entry_atr_pct": _entry_atr, "ema20_dist_pct": _ema20_dist, "ema50_dist_pct": _ema50_dist,
+            "entry_slope": _entry_slope, "volume_ratio": _vol_ratio,
         }
         tid = await db.log_trade(trade)
         if tid:

@@ -71,6 +71,26 @@ def atr_pct(highs: list[float], lows: list[float], closes: list[float], period: 
     return a / closes[-1]
 
 
+def volume_ratio(candles, lookback: int = 20) -> float | None:
+    """Latest bar's volume / trailing `lookback`-bar average volume (volume at row index 5).
+    Instrumentation only: returns None when there aren't enough bars or the average is zero
+    (never fabricates a 1.0). Distinct from trend._volume_confirmed, which is a gate and
+    deliberately returns (True, 0.0) on missing data so it never blocks an entry."""
+    rows = candles or []
+    if len(rows) < lookback + 1:
+        return None
+    try:
+        vols = [float(r[5]) for r in rows[-(lookback + 1):] if len(r) > 5]
+    except (TypeError, ValueError):
+        return None
+    if len(vols) != lookback + 1:
+        return None
+    avg = sum(vols[:-1]) / lookback
+    if avg <= 0:
+        return None
+    return vols[-1] / avg
+
+
 def stdev(values: list[float]) -> float:
     n = len(values)
     if n < 2:

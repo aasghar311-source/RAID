@@ -12,6 +12,7 @@ import brain
 from signals import Signal
 from scanner import ScanResult
 from raid.execution.time_stops import c10_time_stop_due, classify_stop_reason, no_progress_exit_due
+from raid.execution.instrumentation import excursion_update, minutes_since
 
 log = logging.getLogger("raid.executor")
 
@@ -363,8 +364,11 @@ async def monitor_positions(db):
                 )
                 continue
 
-            # Peak tracking (instrumentation only — records high-water profit %
-            # of each trade so exit thresholds can be tuned from real data).
+            # Excursion tracking (instrumentation only — high-water MFE + its timing and the
+            # full adverse excursion MAE + its timing, so exit thresholds and winner-shape can
+            # be tuned from real data). Reuses the live `price` already fetched (no extra API
+            # call); the exit ladder below is untouched. peak_pnl_pct keeps its old semantics
+            # (floored at 0), now joined by mfe/mae timing + mae_pct.
             try:
                 _entry = trade.get("entry_price") or 0
                 _dir = trade.get("direction")
@@ -373,12 +377,15 @@ async def monitor_positions(db):
                         _cur_pct = (price - _entry) / _entry * 100
                     else:
                         _cur_pct = (_entry - price) / _entry * 100
-                    _prev_peak = trade.get("peak_pnl_pct") or 0
-                    if _cur_pct > _prev_peak:
-                        await db.update_trade_fields(trade["id"], {"peak_pnl_pct": round(_cur_pct, 3)})
-                        trade["peak_pnl_pct"] = round(_cur_pct, 3)
+                    _changed = excursion_update(
+                        trade.get("peak_pnl_pct") or 0, trade.get("mae_pct"),
+                        _cur_pct, minutes_since(trade.get("open_time")),
+                    )
+                    if _changed:
+                        await db.update_trade_fields(trade["id"], _changed)
+                        trade.update(_changed)
             except Exception as exc:  # noqa: BLE001
-                log.error("peak tracking failed for %s: %s", trade.get("id"), exc)
+                log.error("excursion tracking failed for %s: %s", trade.get("id"), exc)
 
             await update_trailing_stop(trade, price, db, quote=_quote, side=_side)
 
