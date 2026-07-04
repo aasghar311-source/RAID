@@ -41,7 +41,10 @@ WORKER_ID              = os.getenv("RAILWAY_REPLICA_ID") or os.getenv("HOSTNAME"
 # the worker syncs the DB to this value at startup (see worker.main).
 BRAIN_CYCLE_MINUTES    = 5
 MAX_OPEN_TRADES        = 60
-MAX_ENTRIES_PER_CYCLE  = 30
+# (Commit D) breadth: allow opening across many DIFFERENT symbols in one cycle (per-symbol
+# dedupe keeps it to one candidate per symbol, so this ~= max distinct symbols opened/cycle).
+# The real bound is the 95% MARGIN deployment cap, not this number.
+MAX_ENTRIES_PER_CYCLE  = 40
 CLAUDE_DAILY_BUDGET_USD = 7.0
 CLAUDE_MODEL           = "claude-haiku-4-5-20251001"
 
@@ -94,8 +97,8 @@ KALSHI_MAX_OPEN               = 4
 # Stop correlated same-symbol stacking (e.g. the SLXUSD C3-short 4-stack that multiplied one
 # bad thesis into a ~-$20 loss cluster). Enforced in the runner OPEN path against a live count
 # of currently-open positions. INITIAL values — calibrate after the 24h run.
-MAX_OPEN_PER_SYMBOL_STRATEGY_DIRECTION = 1   # at most 1 open per (symbol, strategy, direction)
-MAX_OPEN_PER_SYMBOL_TOTAL              = 2   # at most 2 open on one symbol across all strategies
+MAX_OPEN_PER_SYMBOL_STRATEGY_DIRECTION = 2   # (Commit D) up to 2 per (symbol, strategy, direction)
+MAX_OPEN_PER_SYMBOL_TOTAL              = 3   # (Commit D) up to 3 open on one symbol across strategies
 
 # --- Markets (Phase 1 — crypto only; later phases flip via operator_controls) --
 CRYPTO_ENABLED     = True
@@ -242,7 +245,7 @@ CLAUDE_BUDGET_DAILY     = CLAUDE_DAILY_BUDGET_USD   # alias
 BUDGET_TECH_THRESHOLD   = 75.0
 CLAUDE_MAX_TOKENS       = 100
 KILL_SWITCH_ACTIVE      = False
-MAX_ENTRIES_PER_CYCLE   = 30
+MAX_ENTRIES_PER_CYCLE   = 40   # (Commit D) duplicate of the value above — kept in sync (40)
 KALSHI_YES_LOW  = 0.30
 KALSHI_YES_HIGH = 0.70
 KALSHI_SKIP_LOW  = 0.35

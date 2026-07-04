@@ -8,6 +8,7 @@ symbol is blocked by the per-symbol total (2); unrelated symbols are unaffected.
 Discovered and run by raid.tests.run_all (plain asserts, no pytest).
 """
 
+import config
 from raid.core.universe import open_concentration_counts, concentration_reject_reason
 
 MAX_SSD = 1
@@ -18,6 +19,22 @@ def _open(symbol, strat, direction):
     # Trades carry the strategy id in claude_reasoning, matching the runner's booking tag.
     return {"symbol": symbol, "direction": direction,
             "claude_reasoning": f"{strat} limit net_rr=1.5 lev=3x margin=200.00 :: x"}
+
+
+def test_commit_d_caps_are_2_and_3():
+    # (Commit D) raised concurrency: 2 per (symbol,strategy,direction), 3 per symbol total.
+    assert config.MAX_OPEN_PER_SYMBOL_STRATEGY_DIRECTION == 2
+    assert config.MAX_OPEN_PER_SYMBOL_TOTAL == 3
+    md, ms = config.MAX_OPEN_PER_SYMBOL_STRATEGY_DIRECTION, config.MAX_OPEN_PER_SYMBOL_TOTAL
+    # 1 then 2 open of the same (symbol,strat,dir) are allowed; the 3rd is blocked.
+    ssd, sym = open_concentration_counts([_open("SOLUSD", "RAID-C2", "long")])
+    assert concentration_reject_reason(ssd, sym, "SOLUSD", "RAID-C2", "long", md, ms) is None
+    ssd, sym = open_concentration_counts([_open("SOLUSD", "RAID-C2", "long")] * 2)
+    assert "per_symbol_strategy_direction" in concentration_reject_reason(ssd, sym, "SOLUSD", "RAID-C2", "long", md, ms)
+    # Up to 3 per symbol across strategies; the 4th (any strat) is blocked by the per-symbol total.
+    three = [_open("SOLUSD", "RAID-C2", "long"), _open("SOLUSD", "RAID-C1", "long"), _open("SOLUSD", "RAID-C5", "long")]
+    ssd, sym = open_concentration_counts(three)
+    assert "per_symbol_total" in concentration_reject_reason(ssd, sym, "SOLUSD", "RAID-C6", "long", md, ms)
 
 
 def test_counts_from_open_trades():
