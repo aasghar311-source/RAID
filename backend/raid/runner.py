@@ -34,7 +34,8 @@ from raid.core.regime import classify
 from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier
 from raid.core.strategy import StrategyContext, StrategyMode
 from raid.core.universe import (
-    compute_universe_rankings, has_opposite, parse_strategy_tag, trade_margin, within_cooldown,
+    compute_universe_rankings, concentration_reject_reason, has_opposite,
+    open_concentration_counts, parse_strategy_tag, trade_margin, within_cooldown,
 )
 from raid.strategies.catalog import build_default_registry
 from raid.strategies.rotation import C6_REBALANCE_HOURS
@@ -297,6 +298,9 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
 
     deployed_margin = sum(trade_margin(t) for t in open_trades)   # MARGIN, not notional
     open_symbols = {t.get("symbol") for t in open_trades if t.get("symbol")}
+    # Live concentration counts (per symbol+strategy+direction, and per symbol) for the
+    # open-time caps that stop correlated same-symbol stacking. Recomputed each cycle.
+    conc_ssd, conc_symbol = open_concentration_counts(open_trades)
     # Per-symbol open directions for opposite-direction protection (block hedging one symbol).
     open_dirs_by_symbol: dict[str, set] = {}
     for t in open_trades:
@@ -389,6 +393,18 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
                      sr.symbol, c.direction.value)
             continue
 
+        # Concentration caps (open-time GATE, not a sizing change): reject a candidate that
+        # would stack the same (symbol,strategy,direction), or exceed the per-symbol total —
+        # the failure mode behind the SLXUSD C3-short 4-stack (~-$20 correlated loss cluster).
+        _conc = concentration_reject_reason(
+            conc_ssd, conc_symbol, sr.symbol, strat.strategy_id, c.direction.value,
+            config.MAX_OPEN_PER_SYMBOL_STRATEGY_DIRECTION, config.MAX_OPEN_PER_SYMBOL_TOTAL,
+        )
+        if _conc:
+            log.info("RAID ENGINE: skip %s %s %s — concentration cap (%s)",
+                     sr.symbol, strat.strategy_id, c.direction.value, _conc)
+            continue
+
         # Booking-geometry guard: the runner books at reference_price, but STOP/LIMIT-entry
         # strategies anchor stop/target to a trigger/limit that can differ from px. Reject a
         # candidate whose stop/target land on the wrong side of the ACTUAL book price (which
@@ -443,6 +459,12 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             booked += 1
             deployed_margin += margin
             open_symbols.add(sr.symbol)
+            # Keep the live concentration counts current so a later symbol this same cycle
+            # (or a repeat) cannot slip past the caps.
+            conc_symbol[sr.symbol] = conc_symbol.get(sr.symbol, 0) + 1
+            _k = (sr.symbol, strat.strategy_id, c.direction.value)
+            conc_ssd[_k] = conc_ssd.get(_k, 0) + 1
+            open_dirs_by_symbol.setdefault(sr.symbol, set()).add(c.direction.value)
             log.info("RAID ENGINE: booked %s %s %s $%.2f sl=%.6f tp=%.6f net_rr=%s",
                      strat.strategy_id, sr.symbol, c.direction.value, notional,
                      float(c.stop_price), float(c.targets[0]), c.net_rr)

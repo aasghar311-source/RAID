@@ -83,6 +83,13 @@ CONSECUTIVE_LOSS_PAUSE        = 3
 CONSECUTIVE_LOSS_PAUSE_MINUTES = 60
 KALSHI_MAX_OPEN               = 4
 
+# --- Concentration caps (open-time gate, NOT a sizing change) -------------
+# Stop correlated same-symbol stacking (e.g. the SLXUSD C3-short 4-stack that multiplied one
+# bad thesis into a ~-$20 loss cluster). Enforced in the runner OPEN path against a live count
+# of currently-open positions. INITIAL values — calibrate after the 24h run.
+MAX_OPEN_PER_SYMBOL_STRATEGY_DIRECTION = 1   # at most 1 open per (symbol, strategy, direction)
+MAX_OPEN_PER_SYMBOL_TOTAL              = 2   # at most 2 open on one symbol across all strategies
+
 # --- Markets (Phase 1 — crypto only; later phases flip via operator_controls) --
 CRYPTO_ENABLED     = True
 KALSHI_ENABLED     = False

@@ -89,6 +89,40 @@ def has_opposite(open_directions, direction: str) -> bool:
     return opposite in (open_directions or set())
 
 
+def open_concentration_counts(open_trades):
+    """From a list of open-trade dicts, return two live counts used by the concentration
+    caps: {(symbol, strategy_id, direction): n} and {symbol: n}. Trades missing a symbol are
+    skipped; a trade with no parseable strategy tag still counts toward the per-symbol total.
+    Pure + testable."""
+    per_ssd: dict[tuple, int] = {}
+    per_symbol: dict[str, int] = {}
+    for t in open_trades or []:
+        sym = t.get("symbol")
+        if not sym:
+            continue
+        per_symbol[sym] = per_symbol.get(sym, 0) + 1
+        direction = t.get("direction")
+        strat = parse_strategy_tag(t.get("claude_reasoning"))
+        if direction and strat:
+            key = (sym, strat, direction)
+            per_ssd[key] = per_ssd.get(key, 0) + 1
+    return per_ssd, per_symbol
+
+
+def concentration_reject_reason(per_ssd, per_symbol, symbol, strategy, direction,
+                                max_per_ssd: int, max_per_symbol: int):
+    """Return a reason string if opening (symbol, strategy, direction) would breach a
+    concentration cap given the current open counts, else None. Same-direction-only gate —
+    opposite-direction is handled separately by has_opposite(). Pure + testable."""
+    n_ssd = per_ssd.get((symbol, strategy, direction), 0)
+    if n_ssd >= max_per_ssd:
+        return f"per_symbol_strategy_direction {n_ssd}>={max_per_ssd}"
+    n_sym = per_symbol.get(symbol, 0)
+    if n_sym >= max_per_symbol:
+        return f"per_symbol_total {n_sym}>={max_per_symbol}"
+    return None
+
+
 def _closes_vols(candles) -> tuple[list[float], list[float]]:
     closes, vols = [], []
     for c in candles or []:
