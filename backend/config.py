@@ -164,16 +164,31 @@ CLAUDE_BUDGET_ALERT_AT = 6.0   # alert when spend exceeds $6 of $7
 # --- Scanner tuning -------------------------------------------------------
 KRAKEN_OHLC_INTERVAL  = 5        # minutes per candle
 KRAKEN_MAX_PAIRS      = 0        # Disabled — volatile pairs only
+# 2026-07-04: removed SLXUSD, SYNUSD, GWEIUSD, RAVEUSD, PENDLEUSD (Kraken spot-only —
+# empty leverage arrays, no margin/short possible live) and FILUSD (caps at 2x < RAID's
+# 3x) after a public AssetPairs + operator margin-list audit. 24 -> 18. All 18 support
+# >=3x margin (see KRAKEN_MAX_LEVERAGE). Fail closed: a pair absent from that map is not traded.
 PRIORITY_PAIRS = [
     # Tier 1 — high volatile + liquid (>5% range, >$1M vol)
-    "RAVEUSD", "SYNUSD", "SLXUSD", "GWEIUSD", "AAVEUSD",
-    "ZECUSD", "AVAXUSD", "NEARUSD", "SOLUSD",
+    "AAVEUSD", "ZECUSD", "AVAXUSD", "NEARUSD", "SOLUSD",
     # Tier 2 — volatile + tradeable (>5% range)
-    "FARTCOINUSD", "WIFUSD", "SPXUSD", "PENDLEUSD", "AEROUSD",
-    "TIAUSD", "JUPUSD", "INJUSD", "FILUSD", "ENAUSD",
+    "FARTCOINUSD", "WIFUSD", "SPXUSD", "AEROUSD",
+    "TIAUSD", "JUPUSD", "INJUSD", "ENAUSD",
     # Tier 3 — moderate volatile (watchlist)
     "APTUSD", "SUIUSD", "RENDERUSD", "HYPEUSD", "ONDOUSD",
 ]
+
+# Per-pair Kraken max margin leverage (operator's live margin list + public AssetPairs for
+# APT). RAID's effective leverage per trade = min(RAID target after drawdown, this cap). A
+# symbol NOT in this map is treated as NOT margin-eligible -> not traded (fail closed). This
+# replaces the old blanket 3x + blanket capability set. INITIAL — re-verify before live.
+KRAKEN_MAX_LEVERAGE = {
+    "SOLUSD": 10, "AVAXUSD": 10, "SUIUSD": 10,
+    "AAVEUSD": 5, "ZECUSD": 5, "HYPEUSD": 5, "FARTCOINUSD": 5,
+    "APTUSD": 4,
+    "NEARUSD": 3, "SPXUSD": 3, "WIFUSD": 3, "TIAUSD": 3, "INJUSD": 3,
+    "RENDERUSD": 3, "ONDOUSD": 3, "ENAUSD": 3, "JUPUSD": 3, "AEROUSD": 3,
+}
 OHLCV_CANDLES         = 300      # candles per pair fetched
 KRAKEN_QUOTES         = ("ZUSD", "USD")
 MIN_24H_USD_VOLUME    = 1_000_000

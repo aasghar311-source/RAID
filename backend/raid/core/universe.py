@@ -17,6 +17,8 @@ import math
 import re
 from datetime import datetime, timezone
 
+import config
+
 # Kraken candle row shape used across the engine: [ts, open, high, low, close, volume].
 _CLOSE_IDX = 4
 _VOL_IDX = 5
@@ -121,6 +123,29 @@ def concentration_reject_reason(per_ssd, per_symbol, symbol, strategy, direction
     if n_sym >= max_per_symbol:
         return f"per_symbol_total {n_sym}>={max_per_symbol}"
     return None
+
+
+def kraken_max_leverage(symbol):
+    """Kraken's max margin leverage for a symbol per config.KRAKEN_MAX_LEVERAGE, or None if
+    the symbol is not in the map (treated as NOT margin-eligible). Pure + testable."""
+    return config.KRAKEN_MAX_LEVERAGE.get(symbol)
+
+
+def is_margin_eligible(symbol) -> bool:
+    """True if the symbol supports margin/short on Kraken (present in the leverage map at
+    >= 2x). Fail closed: an unknown symbol is NOT eligible."""
+    m = kraken_max_leverage(symbol)
+    return m is not None and m >= 2
+
+
+def capped_leverage(target_leverage: int, symbol) -> int:
+    """Effective leverage for a trade = min(RAID target, Kraken per-pair cap). Returns 0 when
+    the symbol is not margin-eligible (fail closed — the caller must then skip the trade).
+    Never exceeds the Kraken cap; floors an eligible pair at 1x."""
+    m = kraken_max_leverage(symbol)
+    if m is None:
+        return 0
+    return max(1, min(int(target_leverage), int(m)))
 
 
 def _closes_vols(candles) -> tuple[list[float], list[float]]:

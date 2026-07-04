@@ -36,8 +36,9 @@ from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier
 from raid.core.circuit import should_auto_pause
 from raid.core.strategy import StrategyContext, StrategyMode
 from raid.core.universe import (
-    compute_universe_rankings, concentration_reject_reason, has_opposite,
-    open_concentration_counts, parse_strategy_tag, trade_margin, within_cooldown,
+    capped_leverage, compute_universe_rankings, concentration_reject_reason, has_opposite,
+    is_margin_eligible, kraken_max_leverage, open_concentration_counts, parse_strategy_tag,
+    trade_margin, within_cooldown,
 )
 from raid.strategies.catalog import build_default_registry
 from raid.strategies.rotation import C6_REBALANCE_HOURS
@@ -58,7 +59,15 @@ _QUARANTINED: dict = {}
 _RISK = PortfolioRiskManager(RiskTier.INITIAL)   # Tier 1: 0.5% risk/trade at cutover
 # Margin + futures verified on the Kraken account (1x leverage only, paper). Granting SHORT
 # (C3/C7-short/C8), FUTURES + MARGIN (C9) so their is_eligible capability gate passes.
-_CAPABILITIES = frozenset({CAP_SPOT_LONG, CAP_SHORT, CAP_MARGIN, CAP_FUTURES})
+_MARGIN_CAPS = frozenset({CAP_SPOT_LONG, CAP_SHORT, CAP_MARGIN, CAP_FUTURES})
+_SPOT_ONLY_CAPS = frozenset({CAP_SPOT_LONG})
+
+
+def _capabilities_for(symbol):
+    """Per-pair capability set (replaces the old blanket grant): a Kraken margin-eligible
+    pair gets full spot-long/short/margin/futures; a spot-only or unknown pair gets spot-long
+    only, so a short/margin strategy's is_eligible() fails on it (fail closed)."""
+    return _MARGIN_CAPS if is_margin_eligible(symbol) else _SPOT_ONLY_CAPS
 
 # C6 rotation-out: close a C6 position only once its symbol falls past this rank
 # (hysteresis vs the top-5 entry band, so we don't churn on a one-rank wobble). Guarded
@@ -183,7 +192,7 @@ def _context(sr, equity: float, ts: str, shared: dict | None = None):
         symbol=sr.symbol, instrument_id=sr.symbol, timestamp=ts,
         market_regime=classify(feats["5m"]).regime, features=feats,
         market_data_snapshot_id=f"{sr.symbol}-{ts}", reference_price=px,
-        spread_pct=spread, depth_ok=depth_ok, capabilities=_CAPABILITIES,
+        spread_pct=spread, depth_ok=depth_ok, capabilities=_capabilities_for(sr.symbol),
         extras=extras,
     )
 
@@ -384,6 +393,14 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("COOLDOWN: skip %s — trade closed within %dm", sr.symbol, config.SYMBOL_COOLDOWN_MINUTES)
             continue
 
+        # (d) Per-pair eligibility (fail closed): a symbol without Kraken margin capability
+        # (absent from config.KRAKEN_MAX_LEVERAGE) cannot be leveraged or shorted live, so it
+        # is not booked at all. The 18 priority pairs are all eligible; this guards against a
+        # spot-only pair ever re-entering the universe.
+        if not is_margin_eligible(sr.symbol):
+            log.info("RAID ENGINE: skip %s — not Kraken margin-eligible (fail closed)", sr.symbol)
+            continue
+
         # Collect candidates from every eligible paper strategy for this symbol.
         symbol_cands = []
         for strat in paper_strats:
@@ -453,12 +470,19 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         base_notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * equity)
         if base_notional < 10:
             continue
-        notional = base_notional * eff_lev
+        # Per-pair leverage cap: never exceed Kraken's max for this symbol. 0 => not eligible
+        # (fail closed; already filtered above, but re-checked here so leverage can never be
+        # applied to an unfit pair).
+        pair_lev = capped_leverage(eff_lev, sr.symbol)
+        if pair_lev < 1:
+            log.info("RAID ENGINE: skip %s — not margin-eligible at book time (fail closed)", sr.symbol)
+            continue
+        notional = base_notional * pair_lev
         margin = base_notional
         if deployed_margin + margin > equity * config.MAX_EQUITY_DEPLOYED_PCT:
             continue
-        log.info("RAID ENGINE: SIZING %s $%.2f notional (%dx leverage, $%.2f margin)",
-                 sr.symbol, notional, eff_lev, margin)
+        log.info("RAID ENGINE: SIZING %s $%.2f notional (%dx leverage, cap %sx, $%.2f margin)",
+                 sr.symbol, notional, pair_lev, kraken_max_leverage(sr.symbol), margin)
 
         sig = Signal(
             market="crypto", symbol=sr.symbol, direction=c.direction.value, confidence=0.0,
@@ -477,7 +501,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             "pnl": 0, "status": "open", "close_reason": None, "paper_mode": config.PAPER_MODE,
             "sl": float(c.stop_price), "tp": float(c.targets[0]),
             "instrument_type": "crypto", "market_regime": ctx.market_regime.value,
-            "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} lev={eff_lev}x margin={margin:.2f} :: {strat.explain_decision(c, ctx)}"[:1000],
+            "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} lev={pair_lev}x margin={margin:.2f} :: {strat.explain_decision(c, ctx)}"[:1000],
             "predicted_prob": None, "kelly_fraction": None,
         }
         tid = await db.log_trade(trade)
