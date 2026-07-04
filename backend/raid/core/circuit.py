@@ -10,10 +10,20 @@ from __future__ import annotations
 import config
 
 
-def should_auto_pause(consecutive_losses: int, threshold: int, already_paused: bool) -> bool:
-    """True if the runner should auto-pause NEW entries this cycle. Fires only when entries
-    are not already paused, so the flag (and its operator_note stamp) is set once per burst."""
-    return (not already_paused) and consecutive_losses >= threshold
+def should_auto_pause(consecutive_losses: int, threshold: int, already_paused: bool,
+                      minutes_since_last_loss, active_window_minutes: int) -> bool:
+    """True if the runner should auto-pause NEW entries this cycle.
+
+    Fires only when the streak is ACTIVE — the most recent loss is within active_window_minutes.
+    A STALE streak (3+ old losses with nothing recent) must NOT pause: otherwise it re-pauses
+    every cycle while auto-resume clears it 15s later, flip-flopping and starving the bot. The
+    window matches the resume cooldown so pause (age < window) and resume (age >= window) are
+    mutually exclusive. Fails safe: unknown loss age -> do not pause."""
+    if already_paused or consecutive_losses < threshold:
+        return False
+    if minutes_since_last_loss is None:
+        return False
+    return minutes_since_last_loss < active_window_minutes
 
 
 def should_auto_resume(pause_entries: bool, operator_note, kill_switch: bool,

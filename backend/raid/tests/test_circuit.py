@@ -16,18 +16,30 @@ COOL = config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES  # 30
 
 
 # ── pause ─────────────────────────────────────────────────────────────────────
-def test_pause_fires_at_threshold():
-    assert should_auto_pause(THRESH, THRESH, already_paused=False) is True
-    assert should_auto_pause(THRESH + 2, THRESH, already_paused=False) is True
+def test_pause_fires_on_active_streak():
+    # Streak at/over threshold AND the last loss is recent (within the window) -> pause.
+    assert should_auto_pause(THRESH, THRESH, False, 1.0, COOL) is True
+    assert should_auto_pause(THRESH + 2, THRESH, False, COOL - 1, COOL) is True
 
 
 def test_pause_not_below_threshold():
-    assert should_auto_pause(THRESH - 1, THRESH, already_paused=False) is False
+    assert should_auto_pause(THRESH - 1, THRESH, False, 1.0, COOL) is False
 
 
 def test_pause_not_when_already_paused():
     # Idempotent: never re-stamp/re-fire when entries are already paused.
-    assert should_auto_pause(THRESH + 5, THRESH, already_paused=True) is False
+    assert should_auto_pause(THRESH + 5, THRESH, True, 1.0, COOL) is False
+
+
+def test_no_pause_on_stale_streak():
+    # THE FLIP-FLOP GUARD: 5 losses but the last one is older than the window -> do NOT pause
+    # (otherwise it re-pauses every cycle while auto-resume clears it, freezing the bot).
+    assert should_auto_pause(5, THRESH, False, COOL, COOL) is False
+    assert should_auto_pause(5, THRESH, False, COOL + 10, COOL) is False
+
+
+def test_no_pause_when_loss_age_unknown():
+    assert should_auto_pause(5, THRESH, False, None, COOL) is False
 
 
 # ── resume ────────────────────────────────────────────────────────────────────

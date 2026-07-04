@@ -261,13 +261,23 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     # positions keep being monitored/exited by the 1s exit loop. Book nothing this cycle.
     try:
         consec = await db.get_consecutive_losses()
-        if should_auto_pause(consec, config.CONSECUTIVE_LOSS_PAUSE, bool(controls.get("pause_entries"))):
+        # Only query the last-loss time when a streak actually exists (avoids a DB round-trip
+        # every cycle). Recency gates the pause so a STALE streak can't flip-flop the bot.
+        mins_since_loss = None
+        if consec >= config.CONSECUTIVE_LOSS_PAUSE:
+            last_loss = await db.get_last_loss_time()
+            if last_loss is not None:
+                mins_since_loss = (datetime.now(timezone.utc) - last_loss).total_seconds() / 60.0
+        if should_auto_pause(consec, config.CONSECUTIVE_LOSS_PAUSE, bool(controls.get("pause_entries")),
+                             mins_since_loss, config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES):
             note = f"{config.AUTO_PAUSE_NOTE_PREFIX} {consec} losses @ {ts}"
             await db.update_operator_controls({"pause_entries": True, "operator_note": note})
             log.warning(
-                "RAID ENGINE: consecutive-loss circuit breaker — %d losses >= %d; auto-pausing "
-                "NEW entries (monitoring continues, auto-resumes %d min after the burst breaks).",
-                consec, config.CONSECUTIVE_LOSS_PAUSE, config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES,
+                "RAID ENGINE: consecutive-loss circuit breaker — %d losses >= %d, last loss %.0f min "
+                "ago; auto-pausing NEW entries (monitoring continues, auto-resumes %d min after the "
+                "burst breaks).",
+                consec, config.CONSECUTIVE_LOSS_PAUSE, mins_since_loss or 0.0,
+                config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES,
             )
             return 0
     except Exception as exc:  # noqa: BLE001
