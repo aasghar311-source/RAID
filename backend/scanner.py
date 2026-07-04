@@ -599,6 +599,43 @@ async def fetch_kraken_prices(symbols):
     return out
 
 
+async def fetch_kraken_quotes(symbols):
+    """Return {symbol: {"last","bid","ask"}} for many Kraken pairs in ONE Ticker call.
+
+    Same request/response as fetch_kraken_prices, but keeps the live bid (b[0]) and ask (a[0])
+    that exit decisions need — the last-trade c[0] freezes for minutes between prints on
+    illiquid pairs while the book keeps requoting. No extra API calls (parses fields already
+    in the response). fetch_kraken_prices is left intact for its other (last-trade) callers.
+    """
+    out: dict = {}
+    syms = [s for s in dict.fromkeys(symbols) if s]  # dedupe, preserve order
+    if not syms:
+        return out
+    try:
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+            res = await client.get(f"{KRAKEN_BASE}/Ticker", params={"pair": ",".join(syms)})
+            result = res.json().get("result", {})
+            pair_map = await _kraken_pair_map(client)
+            for sym in syms:
+                canonical = pair_map.get(sym, sym)
+                t = result.get(canonical) or result.get(sym)
+                if t is None:
+                    t = next((v for k, v in result.items() if sym in k), None)
+                if t is None:
+                    continue
+                try:
+                    out[sym] = {
+                        "last": float(t["c"][0]),
+                        "bid": float(t["b"][0]),
+                        "ask": float(t["a"][0]),
+                    }
+                except (KeyError, IndexError, TypeError, ValueError):
+                    continue
+    except Exception as exc:  # noqa: BLE001
+        log.error("fetch_kraken_quotes failed: %s", exc)
+    return out
+
+
 async def fetch_kalshi_price(market_id: str):
     """Return the current yes price (0-1) for a Kalshi market, or None on failure."""
     try:

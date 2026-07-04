@@ -116,6 +116,10 @@ LOOP_SLEEP_SECONDS    = 1     # exit monitor always runs at 1-second resolution
 # on stale data (Omega rule: fail closed). 30s >> the 1s loop, so this is a safety net,
 # not a normal-path behavior change.
 STALE_PRICE_SECONDS   = 30
+# Exit decisions read the live QUOTE (bid for long exits, ask for short) instead of last-trade,
+# which freezes for minutes between prints on illiquid pairs. Only trust the book when the
+# spread is sane; a wider/crossed/one-sided book falls back to last-trade (fail closed).
+MAX_EXIT_SPREAD_PCT   = 0.02   # 2% — above this the quote is untrusted; use last-trade instead
 CONSECUTIVE_LOSS_LOOKBACK = 50
 # Post-close per-symbol cooldown: at 5-min cycles, block re-entering a symbol for this many
 # minutes after a trade on it closes (prevents churning the same stale setup). 15m = 3 cycles.

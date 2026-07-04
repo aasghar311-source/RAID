@@ -112,10 +112,57 @@ def _trail_fee_floor(entry: float, long_like: bool) -> float:
     return entry * (1 + rt) if long_like else entry * (1 - rt)
 
 
-async def update_trailing_stop(trade: dict, current_price: float, db):
+def exit_price_from_quote(direction, quote, max_spread_pct: float):
+    """Return (exit_price, side) for an OPEN position from a live Kraken quote.
+
+    LONG positions exit at the BID (you sell into the bid); SHORT positions exit at the ASK
+    (you buy back at the ask) — the price a paper fill would actually get, and one that keeps
+    moving as makers requote even when last-trade is frozen between prints. Fails CLOSED to
+    last-trade (with a reason) when the book is invalid (crossed/zero/one-sided) or the spread
+    is wider than max_spread_pct. Pure + testable."""
+    q = quote or {}
+    last = float(q.get("last") or 0.0)
+    bid = float(q.get("bid") or 0.0)
+    ask = float(q.get("ask") or 0.0)
+    long_like = direction in ("long", "yes")
+    if bid > 0 and ask > 0 and bid < ask:
+        mid = (bid + ask) / 2.0
+        if mid > 0 and (ask - bid) / mid <= max_spread_pct:
+            return (bid, "bid") if long_like else (ask, "ask")
+        return (last if last > 0 else mid), "last(wide_spread)"
+    return (last, "last(invalid_book)")
+
+
+async def _exit_price(trade: dict, crypto_quotes: dict = None):
+    """Exit-decision price for an open trade as (price, quote_or_None, side_label). Crypto with
+    a valid book uses the live quote side (bid long / ask short); otherwise fails closed to a
+    single-fetch last-trade (crypto) or the Kalshi price. Only the EXIT path uses this — entries
+    keep their own price source."""
+    market = trade.get("market")
+    sym = trade.get("symbol")
+    if market == "crypto" and crypto_quotes and sym in crypto_quotes:
+        q = crypto_quotes[sym]
+        price, side = exit_price_from_quote(trade.get("direction"), q, config.MAX_EXIT_SPREAD_PCT)
+        return price, q, side
+    price = await _current_price_for_trade(trade, None)   # fallback: last-trade / kalshi
+    return price, None, "last(fallback)"
+
+
+def _quote_log_detail(quote, side) -> str:
+    """Compact bid/ask/last/side/spread suffix for the trail log — lets a live trace SHOW the
+    quote moving while last-trade is frozen. Empty when no quote (fallback / unit tests)."""
+    if not quote:
+        return f" [{side}]" if side else ""
+    b = float(quote.get("bid") or 0.0); a = float(quote.get("ask") or 0.0); l = float(quote.get("last") or 0.0)
+    sp = ((a - b) / ((a + b) / 2.0) * 100.0) if (a > 0 and b > 0) else 0.0
+    return f" [{side} bid={b:.6f} ask={a:.6f} last={l:.6f} spread={sp:.3f}%]"
+
+
+async def update_trailing_stop(trade: dict, current_price: float, db, quote=None, side=None):
     """Ratchet a trade's stop toward profit once it moves in favor; persist if changed.
     Late trail: single 85% lock once +1.5% (config.TRAIL_TRIGGER_PCT) is reached.
-    Insurance only — TP at 2.5% remains the primary exit."""
+    Insurance only — TP at 2.5% remains the primary exit. quote/side are for the evidence log
+    only; current_price is already the correct exit side (bid long / ask short)."""
     try:
         direction = trade.get("direction")
         entry = trade.get("entry_price") or 0
@@ -139,8 +186,8 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             if current_sl is None or new_sl > current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
-                log.info("TRAIL: %s lock 85%% peak_gain=+%.2f%% price=%.6f -> trail_stop %.6f",
-                         symbol, gain * 100, current_price, new_sl)
+                log.info("TRAIL: %s lock 85%% peak_gain=+%.2f%% price=%.6f -> trail_stop %.6f%s",
+                         symbol, gain * 100, current_price, new_sl, _quote_log_detail(quote, side))
         elif short_like:
             gain = (entry - current_price) / entry
             if gain < config.TRAIL_TRIGGER_PCT:
@@ -154,8 +201,8 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
             if current_sl is None or new_sl < current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
                 trade["trail_active"] = True
-                log.info("TRAIL: %s lock 85%% peak_gain=+%.2f%% price=%.6f -> trail_stop %.6f",
-                         symbol, gain * 100, current_price, new_sl)
+                log.info("TRAIL: %s lock 85%% peak_gain=+%.2f%% price=%.6f -> trail_stop %.6f%s",
+                         symbol, gain * 100, current_price, new_sl, _quote_log_detail(quote, side))
     except Exception as exc:  # noqa: BLE001
         log.error("update_trailing_stop failed: %s", exc)
 
@@ -288,21 +335,26 @@ async def monitor_positions(db):
     crypto_symbols = [
         t["symbol"] for t in open_trades if t.get("market") == "crypto" and t.get("symbol")
     ]
-    crypto_prices = await scanner.fetch_kraken_prices(crypto_symbols) if crypto_symbols else {}
+    # Exit decisions read the live QUOTE (bid/ask), not last-trade — last-trade freezes for
+    # minutes between prints on illiquid pairs while the book keeps requoting. Same one Ticker
+    # call; bid/ask were previously discarded.
+    crypto_quotes = await scanner.fetch_kraken_quotes(crypto_symbols) if crypto_symbols else {}
     # Monotonic stamp of when the batch was fetched. A trade processed late in a slow loop
     # ages relative to this; see the staleness guard below.
     _prices_fetched_at = time.monotonic()
 
     for trade in open_trades:
         try:
-            price = await _current_price_for_trade(trade, crypto_prices)
+            # Live-quote exit price: bid for a long, ask for a short (fail-closed to last-trade
+            # on an invalid/wide book). _quote/_side carried for the trail evidence log.
+            price, _quote, _side = await _exit_price(trade, crypto_quotes)
             if price is None or price <= 0:
                 continue
 
             # Age of the price actually used: batch-sourced crypto prices age with the loop's
             # sequential processing time; a single-fetch fallback is fetched fresh here (~0s).
             # Fail closed — never trail or stop on a price that has gone stale (Rule: fail closed).
-            _from_batch = trade.get("symbol") in crypto_prices
+            _from_batch = trade.get("symbol") in crypto_quotes
             price_age = (time.monotonic() - _prices_fetched_at) if _from_batch else 0.0
             if price_too_stale(price_age):
                 log.warning(
@@ -328,7 +380,7 @@ async def monitor_positions(db):
             except Exception as exc:  # noqa: BLE001
                 log.error("peak tracking failed for %s: %s", trade.get("id"), exc)
 
-            await update_trailing_stop(trade, price, db)
+            await update_trailing_stop(trade, price, db, quote=_quote, side=_side)
 
             direction = trade.get("direction")
             entry = trade.get("entry_price") or 0
@@ -357,8 +409,8 @@ async def monitor_positions(db):
                 # This is the evidence artifact for the "trail locked below the peak" report.
                 if close_reason == "trailing_stop":
                     log.info(
-                        "TRAIL EXIT %s %s: stop=%.6f fill=%.6f slip=%.3f%% peak=%.2f%% price_age=%.1fs pnl=$%.2f",
-                        trade.get("market"), trade.get("symbol"), sl, price,
+                        "TRAIL EXIT %s %s: stop=%.6f fill=%.6f(%s) slip=%.3f%% peak=%.2f%% price_age=%.1fs pnl=$%.2f",
+                        trade.get("market"), trade.get("symbol"), sl, price, _side,
                         fill_slippage_pct(direction, sl, price, entry),
                         float(trade.get("peak_pnl_pct") or 0.0), price_age, pnl,
                     )
