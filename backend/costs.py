@@ -3,8 +3,8 @@
 Every fee, spread, and slippage assumption lives here so the ledger can record a
 full cost breakdown (gross, entry_fee, exit_fee, spread, slippage, financing, net)
 instead of one blended number. This replaces scattered magic numbers across the
-codebase: executor.compute_pnl (0.0016*2), brain prompt (0.0032), the UI (0.0032),
-and the trailing fee-floors (entry*1.004 / entry*0.996).
+codebase: executor.compute_pnl and the trailing fee-floors now both derive from
+realized_round_trip_cost_pct() here (was 0.0016*2 and entry*1.004 / entry*0.996).
 
 TWO COST PATHS (deliberately separate):
   • REALIZED ledger — realized_round_trip_cost_pct(), used by executor.compute_pnl and

@@ -101,6 +101,17 @@ def fill_slippage_pct(direction: str, stop, fill, entry) -> float:
     return (stop - fill) / entry * 100.0        # short: fill above stop -> negative
 
 
+def _trail_fee_floor(entry: float, long_like: bool) -> float:
+    """Break-even floor for the trailed stop: a locked exit at this price nets ~0 after the
+    REAL round-trip cost. Sourced from costs.realized_round_trip_cost_pct() (the single source
+    corrected in 1af3446, ~1.04%) so it can never drift from the fee model again. Long: entry
+    above by the cost; short: entry below by the cost. NOTE: with the current trail trigger
+    (1.5%) and lock (0.85) the locked stop is >= entry*1.01275, so this floor is non-binding
+    today — it only clamps if a future lower trigger would otherwise lock a net-loss level."""
+    rt = costs.realized_round_trip_cost_pct()
+    return entry * (1 + rt) if long_like else entry * (1 - rt)
+
+
 async def update_trailing_stop(trade: dict, current_price: float, db):
     """Ratchet a trade's stop toward profit once it moves in favor; persist if changed.
     Late trail: single 85% lock once +1.5% (config.TRAIL_TRIGGER_PCT) is reached.
@@ -121,8 +132,9 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
                 return
             lock_pct = 0.85
             new_sl = entry * (1 + gain * lock_pct)
-            # Fee-protected floor: never trail to a level that nets a loss after fees.
-            fee_floor = entry * 1.004
+            # Fee-protected floor (real round-trip cost, SSOT): never trail to a level that
+            # nets a loss after real fees.
+            fee_floor = _trail_fee_floor(entry, True)
             new_sl = max(new_sl, fee_floor)
             if current_sl is None or new_sl > current_sl:
                 await _persist_sl(db, trade["id"], new_sl)
@@ -135,8 +147,9 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
                 return
             lock_pct = 0.85
             new_sl = entry * (1 - gain * lock_pct)
-            # Fee-protected floor: never trail to a level that nets a loss after fees.
-            fee_floor = entry * 0.996
+            # Fee-protected floor (real round-trip cost, SSOT): never trail to a level that
+            # nets a loss after real fees.
+            fee_floor = _trail_fee_floor(entry, False)
             new_sl = min(new_sl, fee_floor)
             if current_sl is None or new_sl < current_sl:
                 await _persist_sl(db, trade["id"], new_sl)

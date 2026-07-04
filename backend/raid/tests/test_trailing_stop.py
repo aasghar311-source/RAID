@@ -13,6 +13,7 @@ Discovered and run by raid.tests.run_all (plain asserts, no pytest).
 import asyncio
 
 import config
+import costs
 import executor
 
 
@@ -123,3 +124,30 @@ def test_fill_slippage_sign():
     assert abs(executor.fill_slippage_pct("long", 0.417025, 0.417025, e)) < 1e-9
     # Short: filled ABOVE the stop (worse) -> negative slip.
     assert executor.fill_slippage_pct("short", 0.45382, 0.460, 0.4603) < 0
+
+
+# ── Trail fee-floor sourced from the real round-trip cost (SSOT) ───────────────
+def test_trail_fee_floor_uses_real_round_trip_cost():
+    rt = costs.realized_round_trip_cost_pct()   # ~0.0104
+    assert abs(executor._trail_fee_floor(100.0, True) - 100.0 * (1 + rt)) < 1e-12   # long
+    assert abs(executor._trail_fee_floor(100.0, False) - 100.0 * (1 - rt)) < 1e-12  # short
+    # Sourced from the SSOT, not the old hardcoded 0.4%.
+    assert executor._trail_fee_floor(100.0, True) > 100.0 * 1.004
+
+
+def test_trail_floor_clamps_a_sub_cost_level_up():
+    # A long stop at +0.5% was "profitable" under the old 0.4% floor but is a NET LOSS after
+    # the real ~1.04% cost. The floor now clamps it up to the true break-even level.
+    e = 100.0
+    sub_cost_sl = e * 1.005                       # +0.5% (below real round-trip cost)
+    floor = executor._trail_fee_floor(e, True)    # ~+1.04%
+    assert max(sub_cost_sl, floor) == floor       # clamped UP to fee-covering
+    assert floor > sub_cost_sl
+
+
+def test_trail_trigger_and_lock_unchanged():
+    # This commit does NOT touch the trigger (1.5%) or lock ratio (0.85). At gain=1.5% the
+    # locked stop (+1.275%) is above the fee floor, so the floor is non-binding today.
+    assert config.TRAIL_TRIGGER_PCT == 0.015
+    locked_at_trigger = 1 + config.TRAIL_TRIGGER_PCT * 0.85   # 1.01275
+    assert locked_at_trigger > (1 + costs.realized_round_trip_cost_pct())  # floor non-binding
