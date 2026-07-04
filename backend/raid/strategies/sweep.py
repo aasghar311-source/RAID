@@ -26,7 +26,8 @@ from raid.strategies.helpers import build_candidate
 CODE_VERSION = "omega-0.2.0"
 _TF = "5m"
 _MIN_NET_RR = 1.20
-_TP_DEPTH_MULT = 2.2       # target ~= 2x sweep depth (2.2x to clear round-trip costs)
+_TP_DEPTH_MULT = 4.0       # target = 4x sweep depth -> clears the honest 1.20 gate at real 1.04%
+                          # cost for sweeps with >= ~0.82% depth (shallow sweeps are gated out).
 _STOP_BUFFER = 0.001       # stop just beyond the swept wick (the liquidity-grab level)
 # MAX_HOLD_MINUTES is imported from raid.execution.time_stops (single source of truth,
 # also enforced in executor.monitor_positions — the production exit path).

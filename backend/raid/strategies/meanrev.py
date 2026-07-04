@@ -63,7 +63,10 @@ class C4RangeMeanReversion(Strategy):
         if stop >= limit:
             return []
         mid = (hi + lo) / 2
-        target = min(mid, limit * 1.03)          # reversion to mid, capped
+        # Reversion target = the range mid (capped +6%). The old +3% cap truncated the mid
+        # for wide ranges and made C4 uneconomic under the honest 1.04% gate; targeting the
+        # true mid lets wide-range reversions clear it (narrow ranges stay honestly gated).
+        target = min(mid, limit * 1.06)
         if target <= px:                         # runner books at px — require real upside (no tp<=entry)
             return []
         c = build_candidate(

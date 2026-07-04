@@ -61,9 +61,12 @@ def build_candidate(
     if gross_risk <= 0 or gross_reward <= 0:
         return None
 
-    fp = costs.ASSUMED_FILL_FEE_PCT if fee_pct is None else fee_pct
-    spread = float(ctx.spread_pct or 0.0)
-    rt_cost = costs.round_trip_cost_pct(fee_pct=fp, spread_pct=spread, slippage_pct=0.0)
+    # HONEST GATE: net_rr uses the SAME all-in realized round-trip cost as P&L
+    # (costs.realized_round_trip_cost_pct ~1.04% — the SSOT), not the old 0.16% maker
+    # assumption. The 1%/4% geometry clears min_net_rr 1.20 at this cost (~1.45).
+    fp = costs.KRAKEN_TAKER_FEE_PCT if fee_pct is None else fee_pct   # taker — the engine's fill side
+    spread = float(ctx.spread_pct or 0.0)                            # book spread (audit metadata)
+    rt_cost = costs.realized_round_trip_cost_pct()
     net_reward = gross_reward - rt_cost
     net_risk = gross_risk + rt_cost
     if net_risk <= 0 or net_reward <= 0:

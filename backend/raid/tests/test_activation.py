@@ -303,7 +303,10 @@ def test_trail_labeling_short_and_baddata():
 # ── FIX 3: C4 RSI ceiling loosened 45 -> 50 ──────────────────────────────────
 
 def _c4_feat(rsi):
-    return _feat("5m", last_price=95.3, swing_low=95.0, swing_high=100.0, rsi14=rsi, atr_pct=0.008)
+    # Wide range (95..104) so the reversion-to-mid target clears the HONEST 1.04% gate; this
+    # test isolates the RSI ceiling (48 admits, 55 rejects), not the economics. A narrow range
+    # would now be honestly gated out on net_rr, masking the RSI behavior under test.
+    return _feat("5m", last_price=95.3, swing_low=95.0, swing_high=104.0, rsi14=rsi, atr_pct=0.008)
 
 
 def test_c4_rsi_ceiling_admits_neutral_rsi():

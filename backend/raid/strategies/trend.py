@@ -43,10 +43,12 @@ def _volume_confirmed(candles, mult: float = _VOLUME_CONFIRM_MULT) -> tuple[bool
     ratio = vols[-1] / avg
     return ratio >= mult, ratio
 
-# Stop distance bounds (fraction of price) derived from ATR, clamped for sanity.
-_STOP_MIN = 0.006
+# Stop distance bounds (fraction of price) derived from ATR, clamped for sanity. Floor at
+# 1.0% so the 4R target lands the ~1%/4% geometry the honest gate is calibrated to (a 4R
+# target only clears net_rr 1.20 at real 1.04% cost when risk >= ~0.82%).
+_STOP_MIN = 0.010
 _STOP_MAX = 0.020
-_RR_TARGET = 2.5            # gross reward = 2.5x gross risk (nets ~1.5 R:R after 0.32% round-trip)
+_RR_TARGET = 4.0            # gross reward = 4x gross risk -> ~1%/4%, nets ~1.45 R:R after real 1.04% round-trip
 _MIN_NET_RR = 1.25
 
 

@@ -45,9 +45,9 @@ class C5VolatilityExpansion(Strategy):
         if px > upper * 1.002:                   # already expanded — missed it
             return []
         trigger = upper * 1.001                  # breakout of the squeeze box
-        stop = trigger * (1 - max(f.atr_pct or 0.006, 0.006))
+        stop = trigger * (1 - max(f.atr_pct or 0.010, 0.010))   # >=1.0% risk (honest-gate geometry)
         risk = trigger - stop
-        target = trigger + 2.5 * risk            # expansion runs >= 2.5R (nets ~1.5 after costs)
+        target = trigger + 4.0 * risk            # 4R -> ~1%/4%, nets ~1.45 after real 1.04% round-trip
         c = build_candidate(
             strategy_id=self.strategy_id, strategy_version=self.version, code_version=CODE_VERSION,
             ctx=ctx, direction=Direction.LONG, entry_type=EntryType.STOP, timeframe=_TF,

@@ -28,9 +28,9 @@ from raid.strategies.helpers import build_candidate
 
 CODE_VERSION = "omega-0.2.0"
 _SETUP_TF = "1h"          # ranking horizon = hourly
-_STOP_MIN = 0.006
+_STOP_MIN = 0.010        # floor at 1.0% so a 4R target lands ~1%/4% and clears the honest gate
 _STOP_MAX = 0.020
-_RR_TARGET = 2.5          # gross reward = 2.5x gross risk (nets >1.2 R:R after costs)
+_RR_TARGET = 4.0         # gross reward = 4x gross risk -> ~1%/4%, nets ~1.45 R:R after real 1.04% round-trip
 _MIN_NET_RR = 1.20
 _MIN_TREND_QUALITY = 0.15  # R^2 floor — rank on a real move, not noise
 

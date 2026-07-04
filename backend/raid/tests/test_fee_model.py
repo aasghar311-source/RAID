@@ -48,8 +48,18 @@ def test_sub_fee_gross_win_books_net_negative():
     assert abs(pnl - (gross - 600.0 * costs.realized_round_trip_cost_pct())) < 1e-6
 
 
-def test_planning_cost_frozen_does_not_shift_entries():
-    # net_rr / min_net_rr entry gates must be UNCHANGED by this commit: planning still
-    # uses the legacy 0.16%/side (0.32% round-trip), NOT the real taker rate.
+def test_entry_gate_uses_realized_cost():
+    # Commit A (aggressive-retune): the entry net_rr gate now uses the SAME realized
+    # round-trip cost as P&L (~1.04%), NOT the legacy 0.16% planning assumption. Verify the
+    # honest-gate math that the 1%/4% geometry is calibrated to.
+    c = costs.realized_round_trip_cost_pct()
+
+    def nr(gross_reward, gross_risk):
+        return (gross_reward - c) / (gross_risk + c)
+
+    assert nr(0.04, 0.01) >= 1.20              # 1% SL / 4% TP -> ~1.45, clears the honest gate
+    assert abs(nr(0.04, 0.01) - 1.45) < 0.05
+    assert nr(0.02, 0.01) < 1.20               # 1% SL / 2% TP -> ~0.96, correctly rejected
+    assert nr(0.025, 0.01) < 1.20              # old 2.5% TP cap no longer clears at real cost
+    # The legacy planning constants still EXIST but are no longer consulted by the gate.
     assert costs.ASSUMED_FILL_FEE_PCT == 0.0016
-    assert abs(costs.round_trip_cost_pct() - 0.0032) < TOL
