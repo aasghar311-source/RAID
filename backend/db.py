@@ -161,7 +161,11 @@ async def update_equity(equity: float, daily_pnl: float):
     try:
         await (
             supabase.table("equity_snapshots")
-            .insert({"equity": equity, "daily_pnl": daily_pnl, "paper_mode": config.PAPER_MODE})
+            # NOTE: no paper_mode — equity_snapshots has no such column (never did; the write
+            # has failed with PGRST204 since the initial deploy, leaving the table empty). The
+            # bot is paper-permanent so the flag is meaningless on a value snapshot. If a live
+            # path is ever added, add the column via a migration instead of re-adding it here.
+            .insert({"equity": equity, "daily_pnl": daily_pnl})
             .execute()
         )
     except Exception as exc:  # noqa: BLE001
