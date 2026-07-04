@@ -32,7 +32,7 @@ from signals import Signal
 from raid.core import features as F
 from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
-from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier
+from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier, graduated_size_decision
 from raid.core.strategy import StrategyContext, StrategyMode
 from raid.core.universe import (
     capped_leverage, compute_universe_rankings, concentration_reject_reason, has_opposite,
@@ -438,6 +438,28 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
                      sr.symbol, c.direction.value, _epx, _sl, _tp)
             continue
 
+        # Graduated cost/R gate (Commit 2) — ATR-scaled-stop strategies ONLY. For C1/C3/C5/C6/C7
+        # the honest-TP construction pins net_rr at 1.35 regardless of stop distance, so the
+        # net_rr gate above is blind to the ABSOLUTE cost load. When 1R (the stop, = gross_risk)
+        # is so tight the ~1.04% round-trip cost dominates it, the trade is structurally
+        # unwinnable: reject; half-size the marginal band. Structural strategies (C2/C4/C10) have
+        # atr_scaled_stop=False and are exempt (their net_rr gate already prices cost in). This is
+        # an ADDITIONAL filter — the net_rr gate still fires independently.
+        size_mult = 1.0
+        if getattr(strat, "atr_scaled_stop", False):
+            _gross_risk = abs(_epx - _sl) / _epx if _epx > 0 else 0.0
+            _allow, size_mult, _cr_reason = graduated_size_decision(
+                _gross_risk, costs.realized_round_trip_cost_pct(),
+                fatal_ratio=config.COST_R_FATAL_RATIO,
+                marginal_ratio=config.COST_R_MARGINAL_RATIO,
+                marginal_mult=config.COST_R_MARGINAL_SIZE_MULT,
+            )
+            if not _allow:
+                log.info("RAID ENGINE: cost/R reject %s %s — %s", sr.symbol, strat.strategy_id, _cr_reason)
+                continue
+            if size_mult != 1.0:
+                log.info("RAID ENGINE: cost/R half-size %s %s — %s", sr.symbol, strat.strategy_id, _cr_reason)
+
         # Risk-size, gate, and book the single winning candidate.
         state = PortfolioState(Decimal(str(equity)), Decimal(str(peak)))
         decision = _RISK.assess(state, c.reference_price, c.stop_price)
@@ -447,7 +469,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         # Base = risk-sized notional capped at 5% of the DAILY equity base (compounds day over
         # day). Leverage scales the position notional; margin (= base) counts against the 95%
         # deployment cap (which uses live equity).
-        base_notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * sizing_equity)
+        base_notional = min(float(decision.quantity) * float(c.reference_price) * size_mult, config.MAX_TRADE_SIZE_PCT * sizing_equity)
         if base_notional < 10:
             continue
         # Per-pair leverage cap: never exceed Kraken's max for this symbol. 0 => not eligible

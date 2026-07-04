@@ -55,6 +55,7 @@ class C1LongTrendBreakout(Strategy):
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
     eligible_regimes = frozenset({MarketRegime.TREND_UP})
+    atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
         f = ctx.feature(_PRIMARY_TF)
@@ -137,6 +138,7 @@ class C3ShortTrendBreakdown(Strategy):
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SHORT})   # shadow-only until short enabled
     eligible_regimes = frozenset({MarketRegime.TREND_DOWN})
+    atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
         f = ctx.feature(_PRIMARY_TF)

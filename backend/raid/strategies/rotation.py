@@ -100,6 +100,7 @@ class C6RelativeStrengthRotation(Strategy):
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
     eligible_regimes = frozenset({MarketRegime.TREND_UP})
+    atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
         me = _rankings(ctx).get(ctx.symbol)
@@ -133,6 +134,7 @@ class C7CrossSectionalMomentum(Strategy):
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
     eligible_regimes = frozenset({MarketRegime.TREND_UP, MarketRegime.RANGE})
+    atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
         me = _rankings(ctx).get(ctx.symbol)

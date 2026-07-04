@@ -68,6 +68,10 @@ class Strategy(ABC):
     version: str = "0.0.0"
     required_capabilities: frozenset[str] = frozenset({"spot_long"})
     eligible_regimes: frozenset[MarketRegime] = frozenset()
+    # True for strategies whose stop = atr_scaled_stop_dist (1.5x 1h-ATR) and whose TP pins
+    # net_rr at 1.35 -> the net_rr gate is blind to absolute cost load, so the graduated
+    # cost/R gate (runner) applies. Structural-stop strategies leave this False (exempt).
+    atr_scaled_stop: bool = False
 
     # --- eligibility ----------------------------------------------------------
     def is_eligible(self, ctx: StrategyContext) -> bool:

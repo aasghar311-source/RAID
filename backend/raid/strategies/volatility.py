@@ -27,6 +27,7 @@ class C5VolatilityExpansion(Strategy):
     required_capabilities = frozenset({CAP_SPOT_LONG})
     # Fires as the market leaves compression; RANGE (pre-break) is the setup regime.
     eligible_regimes = frozenset({MarketRegime.RANGE})
+    atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
         f = ctx.feature(_TF)

@@ -89,6 +89,33 @@ def position_size(equity: Decimal, risk_pct: float, entry: Decimal, stop: Decima
     return risk_dollars, quantity
 
 
+def graduated_size_decision(
+    gross_risk: float,
+    rt_cost: float,
+    *,
+    fatal_ratio: float,
+    marginal_ratio: float,
+    marginal_mult: float,
+) -> tuple[bool, float, str]:
+    """Graduated cost/R gate on the realized stop distance (gross_risk = 1R).
+
+    cost/R = rt_cost / gross_risk. Reject when cost/R >= fatal_ratio (the round-trip cost
+    dominates the risk unit -> structurally unwinnable); half (marginal_mult) when
+    cost/R is in [marginal_ratio, fatal_ratio); full size otherwise. Returns
+    (allow, size_mult, reason). Pure — thresholds/cost are injected by the caller so this
+    is trivially testable and never drifts from the fee SSOT. Applies ONLY to the
+    ATR-scaled-stop strategies (the caller scopes it via Strategy.atr_scaled_stop)."""
+    if gross_risk <= 0:
+        return (False, 0.0, "degenerate_stop")
+    fatal_stop = rt_cost / fatal_ratio          # gross_risk below this => cost/R >= fatal
+    marginal_stop = rt_cost / marginal_ratio    # gross_risk below this => cost/R >= marginal
+    if gross_risk < fatal_stop:
+        return (False, 0.0, f"cost/R fatal: gross_risk={gross_risk:.4f}<{fatal_stop:.4f}")
+    if gross_risk < marginal_stop:
+        return (True, marginal_mult, f"cost/R marginal: gross_risk={gross_risk:.4f}<{marginal_stop:.4f} -> x{marginal_mult}")
+    return (True, 1.0, "cost/R ok")
+
+
 @dataclass
 class PortfolioState:
     equity: Decimal

@@ -144,6 +144,19 @@ ATR_STOP_MAX       = 0.040    # 4.0% ceiling
 # tp_dist = RR_TARGET_NET*(stop + cost) + cost -> net_rr == RR_TARGET_NET (>= every min_net_rr
 # 1.20/1.25/1.30). RR is held at this honest target; the stop/TP DISTANCES vary per pair.
 RR_TARGET_NET      = 1.35
+# Graduated cost/R gate (Commit 2) — ATR-scaled-stop strategies ONLY (C1/C3/C5/C6/C7).
+# For those, rr_honest_target_dist pins net_rr at 1.35 REGARDLESS of stop distance, so the
+# net_rr gate is blind to the ABSOLUTE cost load. When 1R (the stop) is so tight the ~1.04%
+# round-trip cost dominates it, the trade is structurally unwinnable. Gate on the realized
+# stop distance (gross_risk = 1R), which equals cost/R's denominator exactly (timeframe-free):
+#   cost/R = realized_round_trip_cost_pct / gross_risk
+#   FATAL   cost/R >= 0.87  <=>  gross_risk <= 1.04%/0.87 = 1.20%  (reject; ~ATR_1h < 0.80%)
+#   MARGINAL cost/R >= 0.69 <=>  gross_risk <= 1.04%/0.69 = 1.50%  (half size; ~ATR_1h < 1.00%)
+# Structural-stop strategies (C2/C4/C10) are EXEMPT: their net_rr is not pinned, so their
+# existing net_rr gate already prices cost in (e.g. C4: tight ~0.8% stop but ~5R reward).
+COST_R_FATAL_RATIO       = 0.87   # cost >= this fraction of 1R -> reject
+COST_R_MARGINAL_RATIO    = 0.69   # cost in [marginal, fatal) of 1R -> half size
+COST_R_MARGINAL_SIZE_MULT = 0.5   # risk multiplier for the marginal band
 KALSHI_SL_PCT      = 0.50
 KALSHI_TP_PRICE    = 0.95
 TRAIL_TRIGGER_PCT  = 0.015   # 1.5% — late trail, insurance only. TP at 2.5% is primary exit
