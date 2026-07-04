@@ -6,13 +6,15 @@ instead of one blended number. This replaces scattered magic numbers across the
 codebase: executor.compute_pnl and the trailing fee-floors now both derive from
 realized_round_trip_cost_pct() here (was 0.0016*2 and entry*1.004 / entry*0.996).
 
-TWO COST PATHS (deliberately separate):
-  • REALIZED ledger — realized_round_trip_cost_pct(), used by executor.compute_pnl and
-    runner._rotation_pnl. Reflects THIS account's real tier: all-taker 0.40%/side x2 +
-    ~0.02% margin-open + spread + slippage ≈ 1.04% round-trip on notional.
-  • PLANNING — compute_costs()/net_rr() with ASSUMED_FILL_FEE_PCT (frozen at the legacy
-    0.16%). These feed the min_net_rr ENTRY gates, so they are intentionally NOT changed
-    here — re-tuning them shifts entry selection and is a separate operator decision.
+TWO COST FUNCTIONS (deliberately separate):
+  * REALIZED cost - realized_round_trip_cost_pct(). This is the SINGLE cost used by BOTH
+    the live P&L (executor.compute_pnl, runner._rotation_pnl) AND the live entry gate
+    (raid.strategies.helpers.build_candidate computes net_rr from it). Reflects THIS
+    account's real tier: all-taker 0.40%/side x2 + ~0.02% margin-open + spread + slippage
+    ~= 1.04% round-trip on notional.
+  * LEGACY PLANNING helpers - compute_costs()/net_rr()/round_trip_cost_pct() default to
+    ASSUMED_FILL_FEE_PCT (0.16%). These have NO production callers (tests only) and do NOT
+    feed any live entry gate. Retained for the legacy brain path / reference only.
 
 Verified fee model (operator read the tier live from the Kraken Pro order bar): base tier
 0.25% maker / 0.40% taker per side. The engine fills are ALL taker (immediate market entries
@@ -39,10 +41,11 @@ MARGIN_OPEN_FEE_PCT  = 0.0002   # ~0.02% charged once on notional when a margin 
 SPREAD_PCT   = 0.0005
 SLIPPAGE_PCT = 0.0017
 
-# PLANNING assumption for net_rr / min_net_rr ENTRY gates (raid/strategies/helpers.py).
-# INTENTIONALLY frozen at the legacy 0.16% and DECOUPLED from KRAKEN_MAKER_FEE_PCT so this
-# realized-ledger fee correction does NOT shift entry selection (out of scope — Rule 5).
-# Re-tuning this to the real tier tightens entries and is a separate operator decision.
+# Legacy 0.16% fill assumption. NOT used by the live entry gate: build_candidate
+# (raid/strategies/helpers.py) computes net_rr from realized_round_trip_cost_pct() (~1.04%),
+# the SAME cost the P&L charges. ASSUMED_FILL_FEE_PCT only defaults the legacy planning
+# helpers below (compute_costs/net_rr/round_trip_cost_pct), which have no production callers
+# (tests only). Retained for the legacy brain path / reference.
 ASSUMED_FILL_FEE_PCT = 0.0016
 
 # Perfect-fill paper defaults for the PLANNING cost model (compute_costs/net_rr); the realized
