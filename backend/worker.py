@@ -301,6 +301,31 @@ async def _check_daily_alerts(db_, controls: dict):
         log.error("_check_daily_alerts failed: %s", exc)
 
 
+async def _maybe_auto_resume(db_):
+    """Clear an AUTO consecutive-loss pause once the burst is broken (cooldown elapsed since
+    the last losing close). Runs on the periodic loop so it executes even while entries are
+    paused (the brain loop is gated off during a pause). Never clears a manual pause or an
+    active kill switch; fails closed when the streak state is unknown."""
+    try:
+        from raid.core.circuit import should_auto_resume
+        controls = await db_.get_operator_controls()
+        if not controls.get("pause_entries"):
+            return
+        last_loss = await db_.get_last_loss_time()
+        mins = None
+        if last_loss is not None:
+            mins = (datetime.now(timezone.utc) - last_loss).total_seconds() / 60.0
+        if should_auto_resume(bool(controls.get("pause_entries")), controls.get("operator_note"),
+                              bool(controls.get("kill_switch")), mins,
+                              config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES):
+            ok = await db_.update_operator_controls({"pause_entries": False, "operator_note": None})
+            if ok:
+                log.info("RAID: auto-pause cleared — %.0f min since last loss >= %d cooldown; "
+                         "NEW entries resumed.", mins, config.CONSEC_LOSS_PAUSE_COOLDOWN_MINUTES)
+    except Exception as exc:  # noqa: BLE001
+        log.error("_maybe_auto_resume failed: %s", exc)
+
+
 async def midnight_reset(db_):
     """Daily UTC reset: clear circuit breakers, snapshot equity, log yesterday."""
     try:
@@ -344,6 +369,10 @@ async def _periodic_loop(db_):
                 controls = await db_.get_operator_controls()
                 await _check_daily_alerts(db_, controls)
                 last_alert_check = now
+
+            # Consecutive-loss auto-pause resume check (every iteration ~15s, so it runs even
+            # while entries are paused and the brain loop is gated off).
+            await _maybe_auto_resume(db_)
 
             # Health-state refresh.
             try:
