@@ -6,35 +6,57 @@ instead of one blended number. This replaces scattered magic numbers across the
 codebase: executor.compute_pnl (0.0016*2), brain prompt (0.0032), the UI (0.0032),
 and the trailing fee-floors (entry*1.004 / entry*0.996).
 
-DROP-IN COMPATIBILITY: net_pnl() with defaults reproduces executor.compute_pnl()
-exactly (maker 0.16%/side round trip), so wiring this into the live path does not
-change any historical or current number. Spread/slippage/financing default to 0
-(the current "perfect paper fill" assumption); Phase 5's fill simulator will supply
-real values.
+TWO COST PATHS (deliberately separate):
+  • REALIZED ledger — realized_round_trip_cost_pct(), used by executor.compute_pnl and
+    runner._rotation_pnl. Reflects THIS account's real tier: all-taker 0.40%/side x2 +
+    ~0.02% margin-open + spread + slippage ≈ 1.04% round-trip on notional.
+  • PLANNING — compute_costs()/net_rr() with ASSUMED_FILL_FEE_PCT (frozen at the legacy
+    0.16%). These feed the min_net_rr ENTRY gates, so they are intentionally NOT changed
+    here — re-tuning them shifts entry selection and is a separate operator decision.
 
-⚠️ FEE-RATE CAVEAT (Aug-14 readiness gate §25 "verified fee model"):
-Kraken's published lowest-30d-volume-tier fees are MAKER 0.16%/side and TAKER
-0.26%/side. The legacy paper model assumed 0.16% for EVERY fill (i.e. treats all
-fills as maker), which is optimistic for stop/market exits that are really taker
-fills at 0.26%. We keep 0.16% as the default here ONLY to preserve ledger continuity
-with the 441 historical trades. Before ANY live activation the real account fee tier
-and per-fill maker/taker classification MUST be verified and modeled. Do not silently
-change the default rate — that is a modeling decision for the operator.
+Verified fee model (operator read the tier live from the Kraken Pro order bar): base tier
+0.25% maker / 0.40% taker per side. The engine fills are ALL taker (immediate market entries
++ stop/market exits; no resting-limit path). The realized ledger now charges the taker rate;
+before ANY live activation, re-confirm the account tier and per-fill maker/taker split.
 """
 
 from dataclasses import dataclass
 
-# Kraken published lowest-tier fees (per side). Accurate reference values.
-KRAKEN_MAKER_FEE_PCT = 0.0016   # 0.16% per side
-KRAKEN_TAKER_FEE_PCT = 0.0026   # 0.26% per side
+# THIS ACCOUNT'S REAL Kraken fee tier (operator-verified live from the Pro order bar):
+# base tier 0.25% maker / 0.40% taker per side. The engine's fills are ALL TAKER (immediate
+# market entries + stop/market exits; there is no resting-limit path), so the realized
+# ledger uses the TAKER rate. (Kraken's published *lowest*-volume tier is 0.16%/0.26% — the
+# legacy assumption — but this account trades at the base tier.)
+KRAKEN_TAKER_FEE_PCT = 0.0040   # 0.40% per side — account base tier; engine fills are taker
+KRAKEN_MAKER_FEE_PCT = 0.0025   # 0.25% per side — reference only; the engine never rests a limit
+MARGIN_OPEN_FEE_PCT  = 0.0002   # ~0.02% charged once on notional when a margin position opens
 
-# The paper model's current assumption: all fills treated as maker (matches the
-# legacy executor.compute_pnl). Documented so it can be revisited, not buried.
-ASSUMED_FILL_FEE_PCT = KRAKEN_MAKER_FEE_PCT
+# Execution costs the perfect-fill sim omitted (were 0). SLIPPAGE from Phase-1B (~0.17% avg
+# measured on real stop exits); SPREAD a conservative bid/ask-crossing estimate (~0.05%, ~ the
+# runner's order-book default floor rounded up for illiquid microcaps). NOTE: exit slippage is
+# PARTLY already reflected in the realized exit_price, so charging SLIPPAGE_PCT again makes the
+# all-in figure slightly conservative (pessimistic) — the safe direction for a paper sim.
+SPREAD_PCT   = 0.0005
+SLIPPAGE_PCT = 0.0017
 
-# Perfect-fill paper defaults; Phase 5 fill simulator overrides these per trade.
+# PLANNING assumption for net_rr / min_net_rr ENTRY gates (raid/strategies/helpers.py).
+# INTENTIONALLY frozen at the legacy 0.16% and DECOUPLED from KRAKEN_MAKER_FEE_PCT so this
+# realized-ledger fee correction does NOT shift entry selection (out of scope — Rule 5).
+# Re-tuning this to the real tier tightens entries and is a separate operator decision.
+ASSUMED_FILL_FEE_PCT = 0.0016
+
+# Perfect-fill paper defaults for the PLANNING cost model (compute_costs/net_rr); the realized
+# ledger uses realized_round_trip_cost_pct() below instead.
 DEFAULT_SPREAD_PCT = 0.0
 DEFAULT_SLIPPAGE_PCT = 0.0
+
+
+def realized_round_trip_cost_pct() -> float:
+    """All-in round-trip execution cost as a fraction of NOTIONAL (size_usd) for a TAKER
+    round trip on this account's tier: taker fee x2 (both legs) + one margin-open fee +
+    spread + slippage. This is the REALIZED-ledger cost used by executor.compute_pnl and
+    runner._rotation_pnl. Separate from the frozen planning cost (round_trip_cost_pct)."""
+    return 2.0 * KRAKEN_TAKER_FEE_PCT + MARGIN_OPEN_FEE_PCT + SPREAD_PCT + SLIPPAGE_PCT
 
 
 @dataclass(frozen=True)

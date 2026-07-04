@@ -458,10 +458,13 @@ def test_trade_margin_parsing():
 
 
 def test_pnl_uses_notional_at_leverage():
+    import costs
     from executor import compute_pnl
-    # $600 notional, +2% move -> ~$12 gross minus ~$1.92 round-trip fees.
+    # $600 notional, +2% move -> $12 gross minus the real all-in round-trip cost
+    # (~1.04% of notional = ~$6.24) -> ~$5.76 net. Uses NOTIONAL, both legs.
     pnl = compute_pnl("long", 100.0, 102.0, 600.0)
-    assert 10.0 < pnl < 12.0
+    expected = 12.0 - 600.0 * costs.realized_round_trip_cost_pct()
+    assert abs(pnl - expected) < 1e-6, (pnl, expected)
 
 
 def test_deployment_cap_counts_margin_allows_19():

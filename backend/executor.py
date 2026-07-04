@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import config
+import costs
 import scanner
 import brain
 from signals import Signal
@@ -70,11 +71,12 @@ def calculate_sl_tp(entry: float, direction: str):
 
 
 def compute_pnl(direction: str, entry: float, exit_price: float, size_usd: float):
-    """Return realized USD pnl NET of Kraken round-trip taker fees (0.16% × 2 sides)."""
+    """Return realized USD pnl NET of this account's real all-in round-trip cost — taker
+    0.40%/side x2 + margin-open + spread + slippage (~1.04% of notional), from the single
+    source costs.realized_round_trip_cost_pct(). Charged on NOTIONAL (size_usd), both legs."""
     if entry <= 0:
         return 0.0
-    KRAKEN_TAKER_FEE_PCT = 0.0016
-    fee_cost = size_usd * KRAKEN_TAKER_FEE_PCT * 2
+    fee_cost = size_usd * costs.realized_round_trip_cost_pct()
     if direction in ("long", "yes"):
         gross_pnl = size_usd * (exit_price - entry) / entry
     else:

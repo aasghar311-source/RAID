@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import config
+import costs
 import gate
 from signals import Signal
 
@@ -64,11 +65,6 @@ _CAPABILITIES = frozenset({CAP_SPOT_LONG, CAP_SHORT, CAP_MARGIN, CAP_FUTURES})
 # by a minimum ranked-universe size so a data gap never mass-closes the book.
 _C6_ROTATE_OUT_RANK = 8
 _MIN_RANKED_FOR_ROTATION = 12
-
-# Kraken round-trip taker fee (matches executor.compute_pnl); inlined so the runner
-# stays free of the executor->brain import chain.
-_TAKER_FEE_PCT = 0.0016
-
 
 def build_cutover_registry():
     reg = build_default_registry()
@@ -116,10 +112,11 @@ def _effective_leverage(drawdown_pct: float):
 
 
 def _rotation_pnl(direction: str, entry: float, exit_price: float, size_usd: float) -> float:
-    """Realized USD pnl net of Kraken round-trip fees — mirrors executor.compute_pnl."""
+    """Realized USD pnl net of the real all-in round-trip cost — mirrors executor.compute_pnl
+    via the single source costs.realized_round_trip_cost_pct()."""
     if not entry or entry <= 0:
         return 0.0
-    fee_cost = size_usd * _TAKER_FEE_PCT * 2
+    fee_cost = size_usd * costs.realized_round_trip_cost_pct()
     if direction in ("long", "yes"):
         gross = size_usd * (exit_price - entry) / entry
     else:
