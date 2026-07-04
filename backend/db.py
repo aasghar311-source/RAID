@@ -239,7 +239,7 @@ async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str,
         "close_reason": reason,
     }
     try:
-        _row = supabase.table("trades").select("open_time").eq("id", trade_id).limit(1).execute()
+        _row = await supabase.table("trades").select("open_time").eq("id", trade_id).limit(1).execute()
         _ot = (_row.data[0].get("open_time") if _row and _row.data else None)
         if _ot:
             _o = datetime.fromisoformat(str(_ot).replace("Z", "+00:00"))
