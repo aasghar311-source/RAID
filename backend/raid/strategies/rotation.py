@@ -9,9 +9,12 @@ via ctx.extras['universe_rankings'] (see raid.core.universe). They are distinct:
     never churns fees every 20-minute cycle. The runner also rotates C6 positions OUT
     when they fall out of the leaderboard.
   * C7 formally ranks the whole universe and holds the top quintile (momentum
-    persistence) in TREND_UP or RANGE; it does not re-add a name it already holds, and
-    bottom-quintile names are recorded as SHORT candidates in SHADOW only (no shorts
-    until margin is operator-enabled).
+    persistence) in TREND_UP or RANGE; it does not re-add a name it already holds.
+    Bottom-quintile laggards are SHORT candidates but are gated to a TREND_DOWN regime
+    (mirror of C3). Because C7's eligible_regimes are {TREND_UP, RANGE}, it never runs in
+    TREND_DOWN, so its shorts are SHADOW-ONLY — never booked live. (This removed the
+    measured ~-$33 C7-short-in-RANGE bleed; the prior docstring's "shadow only" claim was
+    stale — the code booked live shorts whenever CAP_SHORT was granted.)
 
 Neither sizes positions (the risk manager does) and neither ever opens a symbol that
 already has an open position (no stacking; also dedupes C6 vs C7 across cycles).
@@ -154,17 +157,21 @@ class C7CrossSectionalMomentum(Strategy):
             c = _long_market_candidate(self.strategy_id, ctx)
             return [c] if c else []
 
-        # Bottom quintile → SHORT the relative laggard. Booked when the short capability is
-        # granted AND the name is genuinely falling (return_24h < 0); otherwise shadow-logged
-        # (don't short a name that's merely a weak member of a rising universe).
+        # Bottom quintile → SHORT the relative laggard, but ONLY in a TREND_DOWN regime
+        # (mirror of C3's gating: never short a weak name in a rising/ranging tape — that is
+        # exactly the -$33 measured C7-short-in-RANGE bleed). C7's eligible_regimes are
+        # {TREND_UP, RANGE}, so it never actually runs in TREND_DOWN — hence C7 shorts are
+        # SHADOW-ONLY (never booked live). Re-enabling later = add TREND_DOWN to eligible_regimes
+        # AND guard the long branch. Longs above are unchanged.
         if me["rank"] > n - quintile:
             if _already_open(ctx):
                 return []                                  # hold; don't stack
-            if CAP_SHORT in ctx.capabilities and me["return_24h"] < 0:
+            if (ctx.market_regime == MarketRegime.TREND_DOWN
+                    and CAP_SHORT in ctx.capabilities and me["return_24h"] < 0):
                 c = _short_market_candidate(self.strategy_id, ctx)
                 return [c] if c else []
             ctx.extras.setdefault("_c7_shadow_shorts", []).append({
-                "symbol": ctx.symbol, "rank": me["rank"], "n": n,
+                "symbol": ctx.symbol, "rank": me["rank"], "n": n, "regime": ctx.market_regime.value,
                 "return_24h": me["return_24h"], "risk_adj_momentum": me["risk_adj_momentum"],
             })
             return []

@@ -374,19 +374,24 @@ def test_c3_generates_short_with_correct_geometry():
     assert float(c.targets[0]) < float(c.reference_price)   # short TP BELOW entry
 
 
-def test_c7_books_short_when_capability_granted():
+def test_c7_short_gated_to_trend_down_shadow_only():
+    # Commit 3: C7 shorts are gated to TREND_DOWN (mirror C3). C7's eligible_regimes are
+    # {TREND_UP, RANGE}, so it never runs in TREND_DOWN -> shorts are SHADOW-ONLY live.
     from raid.strategies.rotation import C7CrossSectionalMomentum
     c7 = C7CrossSectionalMomentum()
-    ranks = {"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}}
-    # CAP_SHORT granted + falling name -> books a short.
-    ctx = _ctx(MarketRegime.RANGE, extras=ranks, caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
-    cands = c7.generate_candidates(ctx)
+    # In RANGE, even WITH CAP_SHORT + a falling name: NO live short now (was the -$33 bleed);
+    # shadow-logged instead.
+    ctx = _ctx(MarketRegime.RANGE, extras={"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}},
+               caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
+    assert c7.generate_candidates(ctx) == []
+    assert ctx.extras.get("_c7_shadow_shorts")
+    # The gate logic books a short ONLY in TREND_DOWN (proves the mirror-of-C3 condition)...
+    ctx2 = _ctx(MarketRegime.TREND_DOWN, extras={"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}},
+                caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
+    cands = c7.generate_candidates(ctx2)
     assert len(cands) == 1 and cands[0].direction == Direction.SHORT and cands[0].strategy_id == "RAID-C7"
-    # No CAP_SHORT -> shadow-logged only, no candidate.
-    ctx2 = _ctx(MarketRegime.RANGE, extras={"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}},
-                caps=frozenset({CAP_SPOT_LONG}))
-    assert c7.generate_candidates(ctx2) == []
-    assert ctx2.extras.get("_c7_shadow_shorts")
+    # ...but production never reaches it: C7 is NOT eligible in TREND_DOWN -> shadow-only live.
+    assert c7.is_eligible(ctx2) is False
 
 
 def test_opposite_direction_protection():
