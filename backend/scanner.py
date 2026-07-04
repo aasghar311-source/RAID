@@ -80,7 +80,10 @@ def _now_iso():
 _TF_REFRESH_CYCLES = {"5m": 1, "15m": 3, "30m": 6, "1h": 12}
 _ohlcv_cache: dict = {}          # {symbol: {tf_key: (rows, fetched_at)}}
 _cycle_counter = 0
-_CALL_PACING_SECONDS = 0.15      # await between live Kraken calls to stay under the rate limit
+_CALL_PACING_SECONDS = 0.25      # await between live Kraken calls — raised from 0.15 for the
+                                # 40-pair universe (~63 OHLC calls/cycle steady, 160 cold); at
+                                # 0.25s that is ~16s/40s of a 300s cycle, well within limits.
+                                # _fetch_ohlcv_cached still falls back to cached data on any 429.
 
 
 def _refresh_due(tf_key: str, cycle: int, cold: bool) -> bool:

@@ -16,9 +16,10 @@ REMOVED = ["SLXUSD", "SYNUSD", "GWEIUSD", "RAVEUSD", "PENDLEUSD", "FILUSD"]
 
 
 def test_removed_pairs_not_in_universe():
+    # The old spot-only / sub-3x removals stay out; universe is now the top-40 ATR set.
     for s in REMOVED:
         assert s not in config.PRIORITY_PAIRS, s
-    assert len(config.PRIORITY_PAIRS) == 18, len(config.PRIORITY_PAIRS)
+    assert len(config.PRIORITY_PAIRS) == 40, len(config.PRIORITY_PAIRS)
 
 
 def test_removed_pairs_not_margin_eligible_and_fail_closed():
@@ -28,17 +29,21 @@ def test_removed_pairs_not_margin_eligible_and_fail_closed():
         assert capped_leverage(3, s) == 0, s          # 0 -> caller skips (fail closed)
 
 
-def test_all_18_eligible_pairs_support_at_least_3x():
-    assert len(config.KRAKEN_MAX_LEVERAGE) == 18
+def test_all_universe_pairs_margin_eligible_and_mapped():
+    # Every priority pair must be in the leverage map and margin-eligible (>=2x). XLMUSD caps
+    # at 2x; the rest >=3x. No spot-only pair may be in the universe.
+    assert len(config.KRAKEN_MAX_LEVERAGE) == 40
+    assert set(config.PRIORITY_PAIRS) == set(config.KRAKEN_MAX_LEVERAGE)
     for s in config.PRIORITY_PAIRS:
         assert is_margin_eligible(s), s
-        assert kraken_max_leverage(s) >= 3, (s, kraken_max_leverage(s))
+        assert kraken_max_leverage(s) >= 2, (s, kraken_max_leverage(s))
 
 
 def test_effective_leverage_never_exceeds_kraken_cap():
     assert capped_leverage(3, "SOLUSD") == 3     # cap 10, target 3 -> 3
-    assert capped_leverage(5, "APTUSD") == 4     # cap 4  < target 5 -> 4
-    assert capped_leverage(3, "WIFUSD") == 3     # cap 3, target 3 -> 3
+    assert capped_leverage(3, "SPXUSD") == 3     # cap 3, target 3 -> 3
+    assert capped_leverage(3, "XLMUSD") == 2     # cap 2 < target 3 -> 2 (live 2x pair)
+    assert capped_leverage(5, "PEPEUSD") == 5    # cap 5, target 5 -> 5
 
 
 def test_two_x_pair_caps_at_two():

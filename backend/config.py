@@ -168,30 +168,30 @@ CLAUDE_BUDGET_ALERT_AT = 6.0   # alert when spend exceeds $6 of $7
 # --- Scanner tuning -------------------------------------------------------
 KRAKEN_OHLC_INTERVAL  = 5        # minutes per candle
 KRAKEN_MAX_PAIRS      = 0        # Disabled — volatile pairs only
-# 2026-07-04: removed SLXUSD, SYNUSD, GWEIUSD, RAVEUSD, PENDLEUSD (Kraken spot-only —
-# empty leverage arrays, no margin/short possible live) and FILUSD (caps at 2x < RAID's
-# 3x) after a public AssetPairs + operator margin-list audit. 24 -> 18. All 18 support
-# >=3x margin (see KRAKEN_MAX_LEVERAGE). Fail closed: a pair absent from that map is not traded.
+# 2026-07-04 (Commit B, aggressive retune): universe = the top 40 most-VOLATILE margin-eligible
+# USD pairs by ATR%(14) on 1h candles, filtered to >= $500K 24h USD volume. Selected from a
+# public Kraken AssetPairs + Ticker + OHLC scan (132 margin-eligible USD pairs -> 45 above the
+# volume floor -> top 40 by ATR%). Breadth is where the aggression comes from. Fail closed: a
+# symbol absent from KRAKEN_MAX_LEVERAGE is NOT traded. Re-run the selection periodically.
 PRIORITY_PAIRS = [
-    # Tier 1 — high volatile + liquid (>5% range, >$1M vol)
-    "AAVEUSD", "ZECUSD", "AVAXUSD", "NEARUSD", "SOLUSD",
-    # Tier 2 — volatile + tradeable (>5% range)
-    "FARTCOINUSD", "WIFUSD", "SPXUSD", "AEROUSD",
-    "TIAUSD", "JUPUSD", "INJUSD", "ENAUSD",
-    # Tier 3 — moderate volatile (watchlist)
-    "APTUSD", "SUIUSD", "RENDERUSD", "HYPEUSD", "ONDOUSD",
+    "BONKUSD", "POPCATUSD", "VVVUSD", "PEPEUSD", "XPLUSD", "TONUSD", "SPXUSD", "FARTCOINUSD",
+    "USELESSUSD", "WLDUSD", "ADAUSD", "AEROUSD", "TIAUSD", "DYDXUSD", "PENGUUSD", "XLMUSD",
+    "PUMPUSD", "ZECUSD", "CRVUSD", "NEARUSD", "AAVEUSD", "INJUSD", "HYPEUSD", "SUIUSD",
+    "HBARUSD", "XRPUSD", "FETUSD", "LTCUSD", "XMRUSD", "ONDOUSD", "XDGUSD", "SOLUSD",
+    "DOTUSD", "AVAXUSD", "UNIUSD", "TAOUSD", "CCUSD", "BCHUSD", "LINKUSD", "ETHUSD",
 ]
 
-# Per-pair Kraken max margin leverage (operator's live margin list + public AssetPairs for
-# APT). RAID's effective leverage per trade = min(RAID target after drawdown, this cap). A
-# symbol NOT in this map is treated as NOT margin-eligible -> not traded (fail closed). This
-# replaces the old blanket 3x + blanket capability set. INITIAL — re-verify before live.
+# Per-pair Kraken max margin leverage (RAW, from public AssetPairs leverage arrays). RAID's
+# effective leverage per trade = min(RAID target 3x after drawdown, this cap). A symbol NOT in
+# this map is NOT margin-eligible -> not traded (fail closed). XLMUSD caps at 2x (still eligible).
 KRAKEN_MAX_LEVERAGE = {
-    "SOLUSD": 10, "AVAXUSD": 10, "SUIUSD": 10,
-    "AAVEUSD": 5, "ZECUSD": 5, "HYPEUSD": 5, "FARTCOINUSD": 5,
-    "APTUSD": 4,
-    "NEARUSD": 3, "SPXUSD": 3, "WIFUSD": 3, "TIAUSD": 3, "INJUSD": 3,
-    "RENDERUSD": 3, "ONDOUSD": 3, "ENAUSD": 3, "JUPUSD": 3, "AEROUSD": 3,
+    "BONKUSD": 3, "POPCATUSD": 3, "VVVUSD": 3, "PEPEUSD": 5, "XPLUSD": 3, "TONUSD": 3,
+    "SPXUSD": 3, "FARTCOINUSD": 5, "USELESSUSD": 3, "WLDUSD": 3, "ADAUSD": 10, "AEROUSD": 3,
+    "TIAUSD": 3, "DYDXUSD": 3, "PENGUUSD": 3, "XLMUSD": 2, "PUMPUSD": 3, "ZECUSD": 5,
+    "CRVUSD": 5, "NEARUSD": 3, "AAVEUSD": 5, "INJUSD": 3, "HYPEUSD": 5, "SUIUSD": 10,
+    "HBARUSD": 5, "XRPUSD": 10, "FETUSD": 3, "LTCUSD": 10, "XMRUSD": 5, "ONDOUSD": 3,
+    "XDGUSD": 10, "SOLUSD": 10, "DOTUSD": 5, "AVAXUSD": 10, "UNIUSD": 5, "TAOUSD": 5,
+    "CCUSD": 3, "BCHUSD": 5, "LINKUSD": 10, "ETHUSD": 10,
 }
 OHLCV_CANDLES         = 300      # candles per pair fetched
 KRAKEN_QUOTES         = ("ZUSD", "USD")
