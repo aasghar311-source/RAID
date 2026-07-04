@@ -254,7 +254,10 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     except Exception as exc:  # noqa: BLE001
         log.error("RAID ENGINE: regime cleanup failed: %s", exc)
 
-    equity = float(await db.get_equity() or config.STARTING_EQUITY)
+    # Live realized equity (compounds with closed-trade P&L) drives the drawdown ladder + the
+    # 95% deployment cap. The 5%-margin SIZING base uses a once-per-day snapshot (smoother).
+    equity = float(await db.get_realized_equity())
+    sizing_equity = float(await db.get_daily_equity_base())
     open_trades = await db.get_open_trades()
     max_open = int(controls.get("max_open_trades") or config.MAX_OPEN_TRADES)
     peak = max(config.STARTING_EQUITY, equity)
@@ -465,9 +468,10 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         if not decision.approved:
             log.info("RAID ENGINE: risk reject %s %s — %s", sr.symbol, strat.strategy_id, decision.reason)
             continue
-        # Base = risk-sized notional capped at 5% equity (~$200 margin). Leverage scales the
-        # position notional; margin (= base) is what counts against the 95% deployment cap.
-        base_notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * equity)
+        # Base = risk-sized notional capped at 5% of the DAILY equity base (compounds day over
+        # day). Leverage scales the position notional; margin (= base) counts against the 95%
+        # deployment cap (which uses live equity).
+        base_notional = min(float(decision.quantity) * float(c.reference_price), config.MAX_TRADE_SIZE_PCT * sizing_equity)
         if base_notional < 10:
             continue
         # Per-pair leverage cap: never exceed Kraken's max for this symbol. 0 => not eligible

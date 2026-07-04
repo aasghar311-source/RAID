@@ -535,6 +535,8 @@ class _FullBookDB:
     async def get_kill_switch(self): return False
     async def get_daily_stats(self, d): return {"pnl": 0}
     async def get_consecutive_losses(self): return 0   # circuit breaker: no streak -> no pause
+    async def get_realized_equity(self): return 4000.0
+    async def get_daily_equity_base(self): return 4000.0
     async def update_operator_controls(self, updates): return True
     async def log_regime(self, e): self.regimes.append(e)
     async def log_trade(self, t): self.trades.append(t); return f"f{len(self.trades)}"

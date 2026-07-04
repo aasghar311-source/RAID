@@ -168,6 +168,32 @@ async def update_equity(equity: float, daily_pnl: float):
         log.error("update_equity failed: %s", exc)
 
 
+async def get_realized_equity() -> float:
+    """TRUE current equity = STARTING_EQUITY + all realized (net-of-fee) closed-trade P&L. This
+    actually compounds — unlike get_equity()/equity_snapshots, which was only written daily and
+    left the sizing/ladder pinned at $4000. Used live for the drawdown ladder + deployment cap."""
+    return config.STARTING_EQUITY + await get_total_realized_pnl()
+
+
+# Daily sizing base — recalculated ONCE PER UTC DAY (module cache), so position size compounds
+# day-over-day, smoother than a per-trade equity read.
+_daily_equity_cache = {"date": None, "equity": None}
+
+
+async def get_daily_equity_base() -> float:
+    """5%-margin sizing base, refreshed once per UTC day. First call of a new day snapshots the
+    current realized equity into equity_snapshots (history) and caches it; later calls that day
+    return the cached value. On a mid-day worker restart it recomputes once (not per trade)."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    if _daily_equity_cache["date"] == today and _daily_equity_cache["equity"] is not None:
+        return _daily_equity_cache["equity"]
+    eq = await get_realized_equity()
+    _daily_equity_cache["date"] = today
+    _daily_equity_cache["equity"] = eq
+    await update_equity(eq, 0.0)   # best-effort daily history row; sizing uses the cache regardless
+    return eq
+
+
 async def get_equity_history(days: int = 30):
     """Return daily equity snapshots for the last N days, ordered oldest-first."""
     try:
