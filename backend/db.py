@@ -1,6 +1,7 @@
 """RAID database layer — single async Supabase client + CRUD and schema verification."""
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from supabase import acreate_client, AsyncClient
@@ -568,6 +569,62 @@ async def cleanup_regime_log(hours: int = 48) -> int:
         return len(res.data or [])
     except Exception as exc:  # noqa: BLE001
         log.error("cleanup_regime_log failed: %s", exc)
+        return 0
+
+
+# ── OHLCV CAPTURE (Option B — write-only backtest instrumentation) ──────────
+# Persists the raw 5m candles the scanner already fetched this cycle so future regime /
+# SL-TP / exit changes can be replayed. This is OBSERVABILITY: no trading code reads it.
+#
+# FAIL-CLOSED: OFF until the operator sets OHLCV_CAPTURE_ENABLED=true (after migration 004
+#   is applied + code deployed). Deploying before the migration writes nothing.
+# FAIL-OPEN on the capture path only: every write is wrapped so a missing table / transient
+#   fault can NEVER block, delay, or crash a trade cycle — it logs and the cycle continues.
+OHLCV_CAPTURE_ENABLED = os.getenv("OHLCV_CAPTURE_ENABLED", "false").lower() in ("1", "true", "yes")
+# Capture the last N bars each cycle: the just-closed bar + the still-forming bar. The
+# (symbol, bar_ts) upsert makes the forming bar converge to its CLOSED values across cycles.
+OHLCV_CAPTURE_TAIL_BARS = 2
+_ohlcv_capture_ok = True   # flips False if the table is absent -> silent no-op thereafter
+
+
+def build_ohlcv_capture_rows(symbol: str, ohlcv: list, tail: int = OHLCV_CAPTURE_TAIL_BARS) -> list:
+    """PURE: turn the last `tail` raw 5m candles ([ts,o,h,l,c,v]) into ohlcv_5m upsert rows.
+    No I/O, never raises for well-formed input (caller wraps regardless). A row missing the
+    OHLC fields is skipped, not fabricated."""
+    rows: list = []
+    for bar in (ohlcv or [])[-tail:]:
+        if not bar or len(bar) < 5:
+            continue
+        try:
+            rows.append({
+                "symbol": symbol,
+                "bar_ts": datetime.fromtimestamp(int(float(bar[0])), tz=timezone.utc).isoformat(),
+                "open": float(bar[1]), "high": float(bar[2]), "low": float(bar[3]),
+                "close": float(bar[4]), "volume": float(bar[5]) if len(bar) > 5 else None,
+            })
+        except (TypeError, ValueError):
+            continue   # skip a malformed candle; never fabricate
+    return rows
+
+
+async def capture_ohlcv_5m(rows: list) -> int:
+    """Best-effort batched UPSERT into ohlcv_5m (write-only). NEVER raises. Returns the row
+    count sent (0 if disabled/empty/failed). Self-disables on a table-absent error (PGRST205)
+    so a premature deploy quietly no-ops; a transient error just drops this cycle's rows."""
+    global _ohlcv_capture_ok
+    if not OHLCV_CAPTURE_ENABLED or not _ohlcv_capture_ok or not rows:
+        return 0
+    try:
+        await supabase.table("ohlcv_5m").upsert(rows, on_conflict="symbol,bar_ts").execute()
+        return len(rows)
+    except Exception as exc:  # noqa: BLE001 — capture must never propagate into the trade cycle
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _ohlcv_capture_ok = False
+            log.error("capture_ohlcv_5m: table 'ohlcv_5m' absent — capture DISABLED for this "
+                      "process (apply migration 004): %s", exc)
+        else:
+            log.error("capture_ohlcv_5m: transient write failure (rows dropped, cycle unaffected): %s", exc)
         return 0
 
 

@@ -332,6 +332,10 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     regime_tally: dict[str, int] = {}
     produced_by: dict[str, int] = {}
     shadow_tally = {"c7_shorts": 0, "c10_sweeps": 0, "c10_shadow": 0}
+    _capture_rows: list = []   # OHLCV backtest capture (write-only; flushed once post-loop)
+    # getattr, not db.X: a db WITHOUT the capture API (e.g. a test double, or a partial
+    # module) safely disables capture rather than raising in the cycle. Fail-closed.
+    _capture_on = bool(getattr(db, "OHLCV_CAPTURE_ENABLED", False))
     for sr in scan_results:
         ctx = _context(sr, equity, ts, shared)
         if ctx is None:
@@ -353,6 +357,16 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             "vol_30d": (_f5.realized_vol if _f5 else None),
             "trajectory": None,
         })
+
+        # OHLCV capture (write-only backtest instrumentation; NEVER affects trading). Reuses
+        # sr.ohlcv already fetched this cycle (no refetch, no new Kraken call). Runs for the
+        # full universe here — BEFORE the capacity continues below. Gated OFF by default in db
+        # and fully wrapped: a capture problem can never block/delay/crash the trade path.
+        if _capture_on:
+            try:
+                _capture_rows.extend(db.build_ohlcv_capture_rows(sr.symbol, sr.ohlcv))
+            except Exception as _cap_exc:  # noqa: BLE001 — capture must never affect the cycle
+                log.error("OHLCV capture row-build failed for %s (skipped): %s", sr.symbol, _cap_exc)
 
         # Drawdown pause (15%+): keep classifying regimes but book NO new entries this cycle.
         if entries_paused:
@@ -536,6 +550,17 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("RAID ENGINE: booked %s %s %s $%.2f sl=%.6f tp=%.6f net_rr=%s",
                      strat.strategy_id, sr.symbol, c.direction.value, notional,
                      float(c.stop_price), float(c.targets[0]), c.net_rr)
+
+    # Flush this cycle's OHLCV capture in ONE batched write. Guarded by _capture_on (so a db
+    # without the capture API is skipped) and wrapped (capture_ohlcv_5m already never raises)
+    # — the trade cycle is already complete above and is unaffected by the result.
+    if _capture_on and _capture_rows:
+        try:
+            _captured = await db.capture_ohlcv_5m(_capture_rows)
+            if _captured:
+                log.info("RAID ENGINE: OHLCV capture wrote %d rows", _captured)
+        except Exception as _cap_exc:  # noqa: BLE001 — capture must never affect the cycle
+            log.error("OHLCV capture flush failed (cycle unaffected): %s", _cap_exc)
 
     log.info(
         "RAID ENGINE: cycle complete — booked %d (regimes: %s | produced: %s | "
