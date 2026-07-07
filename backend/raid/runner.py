@@ -635,6 +635,15 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("RAID ENGINE: booked %s %s %s $%.2f sl=%.6f tp=%.6f net_rr=%s",
                      strat.strategy_id, sr.symbol, c.direction.value, notional,
                      float(c.stop_price), float(c.targets[0]), c.net_rr)
+            # B4: record the versioned dynamic cost estimate for this trade (cost_estimates, new
+            # table; NOT an ALTER trades). RECORD-ONLY — the gate/P&L still use the flat 1.04% floor.
+            if hasattr(db, "insert_cost_estimate"):
+                try:
+                    _ce = costs.dynamic_round_trip_cost_pct(spread_pct=float(ctx.spread_pct))
+                    _ce.update({"trade_id": tid, "pair": sr.symbol, "direction": c.direction.value})
+                    await db.insert_cost_estimate(_ce)
+                except Exception as _ce_exc:  # noqa: BLE001 — recording must never affect the cycle
+                    log.error("cost_estimate record failed for %s (skipped): %s", sr.symbol, _ce_exc)
 
     # Flush this cycle's OHLCV capture in ONE batched write. Guarded by _capture_on (so a db
     # without the capture API is skipped) and wrapped (capture_ohlcv_5m already never raises)

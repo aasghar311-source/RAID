@@ -678,6 +678,31 @@ async def upsert_drawdown_state(fields: dict) -> bool:
         return False
 
 
+# ── COST ESTIMATES (B4: versioned dynamic cost recorded per trade) ────────────
+_cost_estimates_ok = True   # flips False if the table is absent -> recording no-ops thereafter
+
+
+async def insert_cost_estimate(row: dict) -> bool:
+    """Best-effort insert of a versioned cost estimate (keyed by trade_id) into cost_estimates.
+    RECORD-ONLY — never feeds the live gate/P&L. Never raises; self-disables on a table-absent
+    error so a premature deploy quietly no-ops."""
+    global _cost_estimates_ok
+    if not _cost_estimates_ok or not row:
+        return False
+    try:
+        res = await supabase.table("cost_estimates").insert(row).execute()
+        return bool(res.data)
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _cost_estimates_ok = False
+            log.error("insert_cost_estimate: table 'cost_estimates' absent — recording DISABLED "
+                      "for this process (apply migration 006): %s", exc)
+        else:
+            log.error("insert_cost_estimate failed (%s)", exc)
+        return False
+
+
 # ── PREDICTIONS ───────────────────────────────────────────────────────────
 
 async def log_prediction(entry: dict):

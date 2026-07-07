@@ -62,6 +62,40 @@ def realized_round_trip_cost_pct() -> float:
     return 2.0 * KRAKEN_TAKER_FEE_PCT + MARGIN_OPEN_FEE_PCT + SPREAD_PCT + SLIPPAGE_PCT
 
 
+# B4: versioned dynamic cost. cost_model_version is stamped on every recorded estimate so a later
+# refinement (real per-pair fee/spread/slippage) is distinguishable in the ledger. RECORDED per
+# trade in cost_estimates; it does NOT yet replace realized_round_trip_cost_pct() in the live gate/
+# P&L — 1.04% remains the conservative FLOOR and the live cost until a separate enforcement change.
+COST_MODEL_VERSION = "cost-v1-2026-07-07"
+# Placeholder reserves (UNCALIBRATED — record-only; used by NO decision). Rollover reserve is
+# charged only when a hold can cross a Kraken rollover boundary; financing is otherwise not modeled.
+ROLLOVER_RESERVE_PCT = 0.0005
+UNCERTAINTY_BUFFER_PCT = 0.0015
+
+
+def dynamic_round_trip_cost_pct(*, spread_pct=None, slippage_pct=None, crosses_rollover=False,
+                                uncertainty_buffer_pct=UNCERTAINTY_BUFFER_PCT) -> dict:
+    """B4: a VERSIONED expected all-in round-trip cost estimate as a fraction of notional. Extends
+    the flat model with per-trade spread/slippage overrides + an optional rollover reserve + an
+    uncertainty buffer, and floors the total at realized_round_trip_cost_pct() (1.04%, conservative).
+    Returns a component dict incl. cost_model_version. RECORD-ONLY — not yet fed to the gate/P&L."""
+    entry_fee = KRAKEN_TAKER_FEE_PCT
+    exit_fee = KRAKEN_TAKER_FEE_PCT
+    margin_open = MARGIN_OPEN_FEE_PCT
+    spread = SPREAD_PCT if spread_pct is None else max(float(spread_pct), 0.0)
+    slippage = SLIPPAGE_PCT if slippage_pct is None else max(float(slippage_pct), 0.0)
+    rollover = ROLLOVER_RESERVE_PCT if crosses_rollover else 0.0
+    buffer = max(float(uncertainty_buffer_pct or 0.0), 0.0)
+    floor = realized_round_trip_cost_pct()
+    total = max(entry_fee + exit_fee + margin_open + spread + slippage + rollover + buffer, floor)
+    return {
+        "cost_model_version": COST_MODEL_VERSION,
+        "entry_fee_pct": entry_fee, "exit_fee_pct": exit_fee, "margin_open_pct": margin_open,
+        "spread_pct": spread, "slippage_pct": slippage, "rollover_reserve_pct": rollover,
+        "uncertainty_buffer_pct": buffer, "floor_pct": floor, "total_pct": total,
+    }
+
+
 @dataclass(frozen=True)
 class CostBreakdown:
     """Itemized cost accounting for one round-trip trade. All fields in USD."""
