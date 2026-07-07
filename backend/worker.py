@@ -721,6 +721,14 @@ async def main():
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        # Release the lease on graceful shutdown so a redeploy's new worker ACQUIRES immediately
+        # (no PASSIVE gap). Scoped to THIS worker; best-effort.
+        if config.USE_NEW_ENGINE:
+            try:
+                if await db.release_lease(config.WORKER_ID):
+                    log.info("LEASE released on shutdown (worker=%s) — clean handoff", config.WORKER_ID)
+            except Exception as exc:  # noqa: BLE001
+                log.error("lease release on shutdown failed: %s", exc)
         server.close()
         try:
             await server.wait_closed()

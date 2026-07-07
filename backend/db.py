@@ -68,6 +68,24 @@ async def try_claim_lease(row_id: int, worker_id: str, now_iso: str, new_expiry_
         return True
 
 
+async def release_lease(worker_id: str, row_id: int = 1) -> bool:
+    """Release the worker lease on graceful shutdown IF this worker holds it, so a redeploy's new
+    worker ACQUIRES immediately (no PASSIVE gap). Scoped by holder_id so it never frees ANOTHER
+    worker's lease. Best-effort; never raises."""
+    try:
+        res = await (
+            supabase.table("worker_leases")
+            .update({"holder_id": None, "expires_at": _now_iso()})
+            .eq("id", row_id)
+            .eq("holder_id", worker_id)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("release_lease failed (%s)", exc)
+        return False
+
+
 async def get_lease(row_id: int = 1):
     """Return the current lease row dict, or None if unavailable."""
     try:
