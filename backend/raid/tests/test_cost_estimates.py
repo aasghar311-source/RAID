@@ -32,6 +32,19 @@ def test_dynamic_cost_does_not_change_live_cost():
     assert abs(costs.realized_round_trip_cost_pct() - 0.0104) < 1e-9
 
 
+def test_thin_spread_never_below_floor():
+    # zero spread + zero slippage + zero buffer -> raw components (2*taker + margin_open = 0.82%)
+    # are BELOW the 1.04% realized floor; the hard max() must floor the total AT the realized cost.
+    est = costs.dynamic_round_trip_cost_pct(spread_pct=0.0, slippage_pct=0.0, uncertainty_buffer_pct=0.0)
+    raw = 2 * costs.KRAKEN_TAKER_FEE_PCT + costs.MARGIN_OPEN_FEE_PCT
+    assert raw < costs.realized_round_trip_cost_pct()                 # raw sum is genuinely below floor
+    assert est["total_pct"] == costs.realized_round_trip_cost_pct()   # floored exactly at 1.04%
+    # negative/degenerate overrides are clamped to 0 and still cannot push the total below the floor
+    est2 = costs.dynamic_round_trip_cost_pct(spread_pct=-5.0, slippage_pct=-5.0, uncertainty_buffer_pct=-5.0)
+    assert est2["spread_pct"] == 0.0 and est2["slippage_pct"] == 0.0
+    assert est2["total_pct"] >= costs.realized_round_trip_cost_pct()
+
+
 def test_cost_estimate_persist_roundtrip():
     store = []
 
