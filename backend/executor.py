@@ -278,13 +278,28 @@ async def execute_trade(signal: Signal, brain_result, db):
         return TradeResult("", signal.symbol, signal.direction, 0.0, 0.0, 0.0, 0.0, "error", config.PAPER_MODE)
 
 
+def _assert_live_orders_allowed(venue: str) -> None:
+    """Fail-closed execution boundary. Refuse any live order unless the operator has
+    deliberately flipped all three paper-only flags (config.live_orders_allowed()).
+    They default safe, so this ALWAYS raises today — the live-order stubs below are
+    unreachable for live. Adds no live path; can only block, never enable."""
+    if not config.live_orders_allowed():
+        raise RuntimeError(
+            "BLOCKED live %s order — paper-only safety engaged "
+            "(PAPER_ONLY=%s LIVE_TRADING_ENABLED=%s KRAKEN_LIVE_ENABLED=%s)"
+            % (venue, config.PAPER_ONLY, config.LIVE_TRADING_ENABLED, config.KRAKEN_LIVE_ENABLED)
+        )
+
+
 async def _place_kraken_order(signal: Signal, size_usd: float, entry: float):
     """Place a live Kraken order (live mode only). Logged; raises are caught upstream."""
+    _assert_live_orders_allowed("kraken")
     log.info("Kraken live order: %s %s $%.2f @ %.5f", signal.direction, signal.symbol, size_usd, entry)
 
 
 async def _place_kalshi_order(signal: Signal, size_usd: float, entry: float):
     """Place a live Kalshi order (live mode only). Logged; raises are caught upstream."""
+    _assert_live_orders_allowed("kalshi")
     log.info("Kalshi live order: %s %s $%.2f @ %.5f", signal.direction, signal.symbol, size_usd, entry)
 
 

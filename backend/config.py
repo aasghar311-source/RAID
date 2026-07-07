@@ -28,6 +28,34 @@ SUPERSONIC_TARGET      = 1_000_000.0
 # a passive time trigger. Do not re-add LIVE_DATE / BOT_LIVE_DATE.
 PAPER_MODE             = True
 
+# --- Hard paper-only safety flags (fail-closed) ---------------------------
+# Explicit, fail-closed layer ON TOP of PAPER_MODE and the structural absence of any
+# order path (verified: no AddOrder/place_order/create_order anywhere in the repo).
+# Each flag defaults to its SAFE value and falls back to safe on any unset/unparseable
+# env var. A live order is permitted ONLY if an operator deliberately flips ALL THREE
+# (see live_orders_allowed() + executor._assert_live_orders_allowed). Adding these
+# introduces NO live path — the boundary they create can only BLOCK, never enable.
+def _fail_closed_bool(env_name: str, *, safe_default: bool) -> bool:
+    """Parse a bool env var; return safe_default on unset/unparseable (fail-closed)."""
+    raw = os.getenv(env_name)
+    if raw is None:
+        return safe_default
+    val = raw.strip().lower()
+    if val in ("1", "true", "yes", "on"):
+        return True
+    if val in ("0", "false", "no", "off"):
+        return False
+    return safe_default  # unparseable -> safe
+
+PAPER_ONLY           = _fail_closed_bool("PAPER_ONLY", safe_default=True)
+LIVE_TRADING_ENABLED = _fail_closed_bool("LIVE_TRADING_ENABLED", safe_default=False)
+KRAKEN_LIVE_ENABLED  = _fail_closed_bool("KRAKEN_LIVE_ENABLED", safe_default=False)
+
+def live_orders_allowed() -> bool:
+    """True ONLY if an operator deliberately enabled all three live flags. Any single
+    safe value (PAPER_ONLY True, or either live flag False) forbids live orders."""
+    return LIVE_TRADING_ENABLED and KRAKEN_LIVE_ENABLED and not PAPER_ONLY
+
 # --- Engine cutover -------------------------------------------------------
 # The deterministic raid/ engine (typed candidates, 10 strategies, risk manager)
 # replaces the legacy LLM brain path. Set False for an IMMEDIATE emergency rollback
