@@ -837,6 +837,30 @@ async def persist_quote_paths(rows: list) -> int:
         return 0
 
 
+# ── MARKET STATE (Stage-C spine SHADOW; measure-only) ─────────────────────────
+_market_state_ok = True
+
+
+async def persist_market_state(row: dict) -> bool:
+    """Best-effort insert of one market-state spine row (SHADOW) into market_state_log. Returns True
+    on success. Never raises into the cycle; self-disables on a table-absent error."""
+    global _market_state_ok
+    if not _market_state_ok or not row:
+        return False
+    try:
+        res = await supabase.table("market_state_log").insert(row).execute()
+        return bool(res.data)
+    except Exception as exc:  # noqa: BLE001 — shadow spine must never affect the cycle
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _market_state_ok = False
+            log.error("market_state_log: table absent — persistence DISABLED for this process "
+                      "(apply migration 009): %s", exc)
+        else:
+            log.error("persist_market_state failed (%s)", exc)
+        return False
+
+
 # ── PREDICTIONS ───────────────────────────────────────────────────────────
 
 async def log_prediction(entry: dict):

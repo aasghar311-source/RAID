@@ -573,6 +573,32 @@ async def _kraken_pair_map(client):
     return _KRAKEN_PAIR_MAP
 
 
+async def fetch_sensor_ohlcv(symbols, interval: int = 5, limit: int = 60) -> dict:
+    """Best-effort OHLCV for market-state SENSOR symbols (e.g. BTC/XBTUSD) that are NOT in the traded
+    universe (Stage-C spine). Returns {symbol: [[ts,o,h,l,c,vol],...]} (rows, or [] per symbol on
+    failure). Never raises. Measure-only — collected, never traded."""
+    out: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+            for sym in symbols:
+                rows: list = []
+                try:
+                    res = await client.get(f"{KRAKEN_BASE}/OHLC", params={"pair": sym, "interval": interval})
+                    result = res.json().get("result", {})
+                    for k, v in result.items():
+                        if k == "last":
+                            continue
+                        rows = [[c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
+                                for c in v[-limit:]]
+                        break
+                except Exception:  # noqa: BLE001 — a sensor fetch must never break the cycle
+                    rows = []
+                out[sym] = rows
+    except Exception:  # noqa: BLE001
+        return {s: [] for s in symbols}
+    return out
+
+
 async def fetch_kraken_prices(symbols):
     """Return {symbol: last_price} for many Kraken pairs in a single Ticker call."""
     out = {}

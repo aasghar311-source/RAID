@@ -20,6 +20,7 @@ cadence. Nothing here sizes positions (the risk manager does) or trades non-spot
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -295,6 +296,91 @@ async def _rotate_c6_out(open_trades, rankings, scan_results, db, ts) -> set:
     return rotated
 
 
+def _pf(x):
+    return ("%.4f" % x) if isinstance(x, (int, float)) else "na"
+
+
+async def _market_state_shadow(scan_results, rankings, db, ts, now_epoch):
+    """Stage-C market-state spine (SHADOW — measure-only). Computes F1-F5 from live COMPLETED-bar
+    data every cycle, logs MARKET_STATE_SHADOW beside the legacy regime label, and persists to
+    market_state_log. Books NOTHING, feeds NO decision, changes NO sizing/exit. Never raises into
+    the cycle. BTC is COLLECTED as a sensor (not traded)."""
+    # Skip on a db without the accessor (test double) — this also avoids the sensor network fetch
+    # in unit tests; the real db module always exposes persist_market_state.
+    if not hasattr(db, "persist_market_state"):
+        return
+    try:
+        import scanner
+        from raid.core import market_state as MS
+        by_sym = {sr.symbol: sr for sr in scan_results}
+        # BTC sensor (collected, NOT traded): best-effort 5m + 1h.
+        btc5 = btc1 = []
+        try:
+            btc5 = (await scanner.fetch_sensor_ohlcv(["XBTUSD"], interval=5, limit=60)).get("XBTUSD") or []
+            btc1 = (await scanner.fetch_sensor_ohlcv(["XBTUSD"], interval=60, limit=60)).get("XBTUSD") or []
+        except Exception:  # noqa: BLE001
+            pass
+
+        def _major(sym, bars1h):
+            h, l, c = MS._ohlc(MS.completed(bars1h))
+            atrp = F.atr_pct(h, l, c, 14) if len(c) >= 15 else None
+            st = MS._structure(h, l) if len(c) >= 10 else MS.Structure.UNKNOWN
+            d = "up" if st == MS.Structure.TREND_UP else "down" if st == MS.Structure.TREND_DOWN else "flat"
+            return {"symbol": sym, "atr_1h_pct": atrp, "dir": d}
+
+        majors = []
+        if btc1:
+            majors.append(_major("BTCUSD", btc1))
+        for sym in ("ETHUSD", "SOLUSD"):
+            sr = by_sym.get(sym)
+            if sr and getattr(sr, "ohlcv_1h", None):
+                majors.append(_major(sym, sr.ohlcv_1h))
+        breadth = MS.f5_cross_sectional([r.get("return_24h") for r in rankings.values()])
+
+        # Reference series for F2/F3/F4 = the market leader (BTC 5m; else ETH 5m), COMPLETED-bar only.
+        if btc5:
+            ref_sym, ref_bars = "BTCUSD", MS.completed(btc5, now_epoch)
+        else:
+            _eth = by_sym.get("ETHUSD")
+            ref_sym, ref_bars = "ETHUSD", (MS.completed(_eth.ohlcv, now_epoch) if _eth else [])
+
+        ms = MS.compute_market_state(majors, breadth, ref_bars, ref_sym)
+
+        # Legacy classifier regime for the SAME reference (like-for-like lead/lag comparison).
+        legacy = "na"
+        try:
+            _rb = btc5 if ref_sym == "BTCUSD" else (by_sym[ref_sym].ohlcv if ref_sym in by_sym else [])
+            _c = MS.completed(_rb, now_epoch)
+            if len(_c) >= 2:
+                _h, _l, _cl = MS._ohlc(_c)
+                legacy = classify(F.build_feature_snapshot("ms-ref", ref_sym, "5m", _h, _l, _cl)).regime.value
+        except Exception:  # noqa: BLE001
+            pass
+
+        log.info(
+            "MARKET_STATE_SHADOW portfolio=%s fast_dir=%s veto=%s structure=%s | breadth pct_up=%s "
+            "median_ret=%s disp=%s n=%s | majors=%s | ref=%s legacy_regime=%s | votes=%s | "
+            "thresholds=SEEDED(slope_min=%s crisis_atr1h=%s risk_on=%s risk_off=%s) [calibrate from live dist]",
+            ms.portfolio.value, ms.fast_direction.value, ms.excursion_veto, ms.structure.value,
+            _pf(breadth.get("pct_up")), _pf(breadth.get("median_return")), _pf(breadth.get("dispersion")),
+            breadth.get("n"), [(m["symbol"], m["dir"], _pf(m.get("atr_1h_pct"))) for m in majors],
+            ref_sym, legacy, ms.votes, MS.SEED["slope_min"], MS.SEED["crisis_atr_1h_pct"],
+            MS.SEED["risk_on_breadth"], MS.SEED["risk_off_breadth"],
+        )
+        if hasattr(db, "persist_market_state"):
+            await db.persist_market_state({
+                "cycle_ts": ts, "portfolio_state": ms.portfolio.value,
+                "fast_direction": ms.fast_direction.value, "excursion_veto": ms.excursion_veto,
+                "structure": ms.structure.value, "breadth_pct_up": breadth.get("pct_up"),
+                "breadth_median_return": breadth.get("median_return"),
+                "breadth_dispersion": breadth.get("dispersion"), "breadth_n": breadth.get("n"),
+                "reference_symbol": ref_sym, "legacy_regime_ref": legacy,
+                "majors_json": json.dumps(majors)[:2000], "votes_json": json.dumps(ms.votes)[:1000],
+            })
+    except Exception as _ms_exc:  # noqa: BLE001 — shadow spine must never affect the cycle
+        log.error("MARKET_STATE_SHADOW failed (skipped): %s", _ms_exc)
+
+
 async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     """One deterministic cycle. Returns the number of paper trades booked."""
     log.info("RAID ENGINE: strategy cycle start — %d symbols", len(scan_results))
@@ -387,6 +473,10 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
 
     # --- Cross-sectional universe ranking (computed ONCE per cycle) ---
     rankings = compute_universe_rankings(scan_results)
+
+    # Stage-C market-state spine (SHADOW — measure-only; books nothing, feeds no decision, no sizing/
+    # exit change). Logs MARKET_STATE_SHADOW + persists market_state_log alongside the legacy regime.
+    await _market_state_shadow(scan_results, rankings, db, ts, _now_epoch)
 
     # Per-strategy last-entry time (open + recently-closed trades) drives the C6
     # rebalance throttle; the open-symbol set prevents C6/C7 from stacking a name.
