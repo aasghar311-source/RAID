@@ -168,6 +168,11 @@ STALE_PRICE_SECONDS   = 30
 # spread is sane; a wider/crossed/one-sided book falls back to last-trade (fail closed).
 MAX_EXIT_SPREAD_PCT   = 0.02   # 2% — above this the quote is untrusted; use last-trade instead
 CONSECUTIVE_LOSS_LOOKBACK = 50
+# B5: quote-path flight recorder — capture open-position quote evidence (bid/ask/mid/spread/
+# effective exit/MFE/MAE/source/freshness) into position_quote_paths for exit replay. The 1s exit
+# loop only APPENDS to an in-memory buffer; the batched DB write is fire-and-forget so the loop is
+# never blocked. True = capture (self-disables if the table is absent). False = off. Reversible.
+QUOTE_PATH_CAPTURE = True
 # Post-close per-symbol cooldown: at 5-min cycles, block re-entering a symbol for this many
 # minutes after a trade on it closes (prevents churning the same stale setup). 15m = 3 cycles.
 SYMBOL_COOLDOWN_MINUTES = 15

@@ -703,6 +703,31 @@ async def insert_cost_estimate(row: dict) -> bool:
         return False
 
 
+# ── QUOTE PATHS (B5: open-position quote flight recorder; batched, non-blocking) ──
+_quote_paths_ok = True   # flips False if the table is absent -> capture no-ops thereafter
+
+
+async def persist_quote_paths(rows: list) -> int:
+    """Best-effort batched INSERT of quote-path records into position_quote_paths. Called
+    fire-and-forget from the exit monitor, so it NEVER raises and returns the row count written
+    (0 on disabled/empty/failed). Self-disables on a table-absent error."""
+    global _quote_paths_ok
+    if not _quote_paths_ok or not rows:
+        return 0
+    try:
+        await supabase.table("position_quote_paths").insert(rows).execute()
+        return len(rows)
+    except Exception as exc:  # noqa: BLE001 — flight recorder must never affect exits
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _quote_paths_ok = False
+            log.error("persist_quote_paths: table 'position_quote_paths' absent — capture DISABLED "
+                      "for this process (apply migration 007): %s", exc)
+        else:
+            log.error("persist_quote_paths: transient write failure (rows dropped): %s", exc)
+        return 0
+
+
 # ── PREDICTIONS ───────────────────────────────────────────────────────────
 
 async def log_prediction(entry: dict):

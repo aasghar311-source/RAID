@@ -1,5 +1,6 @@
 """RAID executor — position sizing, SL/TP, trailing stops, entry, and open-trade monitoring."""
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -341,6 +342,61 @@ def _sl_tp_hit(direction: str, price: float, sl: float, tp: float):
     return None
 
 
+# ── B5: quote-path flight recorder ────────────────────────────────────────────
+# Bounded in-memory buffer flushed batched + fire-and-forget so the 1s exit loop NEVER blocks on a
+# DB write. Records open-position quote evidence (bid/ask/mid/spread/effective exit/MFE/MAE/source/
+# freshness/validity) into position_quote_paths so exit-engine changes can later be replayed.
+_quote_path_buffer: list = []
+_quote_flush_tasks: set = set()
+_QUOTE_PATH_FLUSH_AT = 200       # flush when the buffer reaches this many records
+_QUOTE_PATH_MAX_BUFFER = 5000    # hard cap: a persistent flush failure can't grow memory unbounded
+
+
+def _buffer_quote_path(trade, price, quote, side, price_age):
+    """Append one quote-path record to the in-memory buffer. SYNCHRONOUS, O(1), NO I/O — it must
+    never block the 1s exit loop. Fully wrapped: a capture error can never affect an exit."""
+    try:
+        if len(_quote_path_buffer) >= _QUOTE_PATH_MAX_BUFFER:
+            del _quote_path_buffer[0]                     # drop oldest (ring-buffer safety)
+        q = quote or {}
+        bid = float(q.get("bid") or 0.0) or None
+        ask = float(q.get("ask") or 0.0) or None
+        mid = ((bid + ask) / 2.0) if (bid and ask) else None
+        spread = ((ask - bid) / mid) if (mid and mid > 0) else None
+        _quote_path_buffer.append({
+            "trade_id": trade.get("id"), "pair": trade.get("symbol"),
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "bid": bid, "ask": ask, "mid": mid, "spread": spread,
+            "effective_exit_price": price, "direction": trade.get("direction"),
+            "mfe": trade.get("peak_pnl_pct"), "mae": trade.get("mae_pct"),
+            "source": side, "freshness_s": round(float(price_age or 0.0), 3),
+            "quote_validity": side in ("bid", "ask"),
+        })
+    except Exception:  # noqa: BLE001 — capture must never affect the exit loop
+        pass
+
+
+def _spawn_flush(coro):
+    """Fire-and-forget a batched quote-path flush without awaiting it (keeps the exit loop
+    non-blocking). Holds a task reference so it is not GC'd mid-flight; drops it on completion."""
+    t = asyncio.create_task(coro)
+    _quote_flush_tasks.add(t)
+    t.add_done_callback(_quote_flush_tasks.discard)
+    return t
+
+
+def _maybe_flush_quote_paths(db):
+    """If the buffer has reached the flush threshold, hand a batch to a fire-and-forget writer and
+    clear it immediately. NON-BLOCKING — returns at once; the DB write runs concurrently."""
+    if not _quote_path_buffer or not hasattr(db, "persist_quote_paths"):
+        return
+    if len(_quote_path_buffer) < _QUOTE_PATH_FLUSH_AT:
+        return
+    batch = _quote_path_buffer[:]
+    _quote_path_buffer.clear()
+    _spawn_flush(db.persist_quote_paths(batch))
+
+
 async def monitor_positions(db):
     """Update trailing stops, close SL/TP hits, and ask Claude on sudden adverse moves.
     PAPER MODE IS PERMANENT — there is no date-based auto-flip to live. Live activation,
@@ -364,6 +420,9 @@ async def monitor_positions(db):
     # Monotonic stamp of when the batch was fetched. A trade processed late in a slow loop
     # ages relative to this; see the staleness guard below.
     _prices_fetched_at = time.monotonic()
+
+    # B5: flush prior ticks' buffered quote-path records (fire-and-forget; never blocks this loop).
+    _maybe_flush_quote_paths(db)
 
     for trade in open_trades:
         try:
@@ -407,6 +466,11 @@ async def monitor_positions(db):
                         trade.update(_changed)
             except Exception as exc:  # noqa: BLE001
                 log.error("excursion tracking failed for %s: %s", trade.get("id"), exc)
+
+            # B5: record this tick's quote-path evidence (append-only; the batched DB write is
+            # fire-and-forget — see _maybe_flush_quote_paths — so the exit loop is never blocked).
+            if config.QUOTE_PATH_CAPTURE and hasattr(db, "persist_quote_paths"):
+                _buffer_quote_path(trade, price, _quote, _side, price_age)
 
             await update_trailing_stop(trade, price, db, quote=_quote, side=_side)
 
