@@ -167,3 +167,24 @@ def test_guard_passes_only_when_all_four_gates_open():
         executor._assert_live_orders_allowed("kraken")   # must NOT raise when all four gates open
     finally:
         _restore(saved)
+
+
+def test_fail_closed_bool_output_is_strict_bool():
+    # (B0 note) The parser must return a STRICT bool for truthy inputs "1"/"yes"/"true" — never a
+    # truthy string/int. (os.getenv only yields str/None, so an int '1' never reaches the parser;
+    # a truthy int/str assigned to a flag is separately rejected by test_no_truthy_string_or_int_coercion.)
+    key = "RAID_TEST_FLAG_B0_TYPE"
+    try:
+        for raw, expected in (("1", True), ("yes", True), ("true", True), ("TRUE", True),
+                              ("on", True), ("0", False), ("no", False), ("false", False),
+                              ("banana", False)):     # unparseable -> safe_default (False), still bool
+            os.environ[key] = raw
+            out = config._fail_closed_bool(key, safe_default=False)
+            assert out is expected                    # strict identity + correct value
+            assert type(out) is bool                  # never a truthy string/int
+    finally:
+        os.environ.pop(key, None)
+    # the shipped module flags are strict bool, never a truthy string/int
+    assert type(config.PAPER_ONLY) is bool
+    assert type(config.LIVE_TRADING_ENABLED) is bool
+    assert type(config.KRAKEN_LIVE_ENABLED) is bool
