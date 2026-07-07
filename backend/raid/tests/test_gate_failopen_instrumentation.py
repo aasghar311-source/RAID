@@ -59,14 +59,14 @@ class _Capture(logging.Handler):
         self.msgs.append(record.getMessage())
 
 
-def _run_with_capture(db):
+def _run_with_capture(db, strategy=None, cycle_ts=None):
     cap = _Capture()
     lg = logging.getLogger("raid.gate")
     lg.addHandler(cap)
     prev = lg.level
     lg.setLevel(logging.WARNING)
     try:
-        result = asyncio.run(gate.check_gate(_Sig(), db))
+        result = asyncio.run(gate.check_gate(_Sig(), db, strategy=strategy, cycle_ts=cycle_ts))
     finally:
         lg.removeHandler(cap)
         lg.setLevel(prev)
@@ -94,3 +94,15 @@ def test_legit_reject_unaffected_and_no_swallow_log():
     result, msgs = _run_with_capture(_DB(kill=True))
     assert result.passed is False and result.reason == "kill_switch_active"
     assert not any("GATE_FAILOPEN" in m or "GATE_PASSED_ON_SWALLOW" in m for m in msgs), msgs
+
+
+def test_gate_lines_carry_strategy_and_cycle_ts():
+    # (B0.5 traceability amendment) a swallow-tagged line carries strategy + cycle_ts so it ties to
+    # its candidate/cycle and can correlate forward to a trade after booking (no trade_id pre-booking).
+    result, msgs = _run_with_capture(_DB(raise_on={"kill"}),
+                                     strategy="RAID-C1", cycle_ts="2026-07-07T00:00:00Z")
+    assert result.passed is True
+    assert any("GATE_FAILOPEN" in m and "strategy=RAID-C1" in m and "cycle_ts=2026-07-07T00:00:00Z" in m
+               for m in msgs), msgs
+    assert any("GATE_PASSED_ON_SWALLOW" in m and "strategy=RAID-C1" in m
+               and "cycle_ts=2026-07-07T00:00:00Z" in m for m in msgs), msgs

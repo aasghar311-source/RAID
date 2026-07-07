@@ -590,7 +590,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             technical_score=0.0, news_sentiment="neutral", news_headline="", news_boost=0.0,
             macro_blocked=False, block_reason="", scan_result=sr,
         )
-        g = await gate.check_gate(sig, db)
+        g = await gate.check_gate(sig, db, strategy=strat.strategy_id, cycle_ts=ts)
         if not g.passed:
             log.info("RAID ENGINE: gate reject %s — %s", sr.symbol, g.reason)
             continue

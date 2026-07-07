@@ -19,29 +19,35 @@ class GateResult:
     reason: str
 
 
-def _gate_failopen(check: str, signal, exc, swallowed: list) -> None:
+def _gate_failopen(check, signal, exc, swallowed, strategy=None, cycle_ts=None) -> None:
     """B0.5 measure-first instrumentation. Record a swallowed gate exception WITHOUT changing
     behavior (the caller still continues / fails open). Under a future fail-closed gate any such
-    exception would REJECT the candidate, so every line is a would-be rejection. Greppable:
+    exception would REJECT the candidate. Each line carries the candidate reference (symbol +
+    strategy + direction + cycle_ts) so a GATE_PASSED_ON_SWALLOW hit ties to its cycle/candidate and
+    can correlate forward to a trade after booking — there is NO trade_id pre-booking. Greppable:
     GATE_FAILOPEN (per swallowed exception) + GATE_PASSED_ON_SWALLOW (entries that returned
     passed=True only because a check's exception was swallowed)."""
     try:
         swallowed.append(check)
         log.warning(
-            "GATE_FAILOPEN check=%s symbol=%s market=%s direction=%s would_reject_failclosed=1 "
-            "exc=%s: %s",
+            "GATE_FAILOPEN check=%s symbol=%s market=%s strategy=%s direction=%s cycle_ts=%s "
+            "would_reject_failclosed=1 exc=%s: %s",
             check, getattr(signal, "symbol", "?"), getattr(signal, "market", "?"),
-            getattr(signal, "direction", "?"), type(exc).__name__, exc,
+            strategy or "?", getattr(signal, "direction", "?"), cycle_ts or "?",
+            type(exc).__name__, exc,
         )
     except Exception:  # noqa: BLE001 — instrumentation must never affect the gate
         pass
 
 
-async def check_gate(signal: Signal, db):
+async def check_gate(signal: Signal, db, *, strategy=None, cycle_ts=None):
     """Run the five risk checks in order, returning on the first failure.
 
     B0.5: swallowed exceptions are still swallowed (behavior UNCHANGED) but now instrumented via
-    _gate_failopen, so a fail-closed flip can be sized from real logs before it is written."""
+    _gate_failopen, so a fail-closed flip can be sized from real logs before it is written. The
+    optional `strategy` + `cycle_ts` (passed by the runner) tag each GATE_* line with the candidate
+    reference (symbol+strategy+direction+cycle_ts) so a swallow ties to its cycle/candidate and can
+    correlate forward to a trade after booking (there is no trade_id pre-booking)."""
     today = datetime.now(timezone.utc).date().isoformat()
     _swallowed: list[str] = []
 
@@ -50,7 +56,7 @@ async def check_gate(signal: Signal, db):
         if await db.get_kill_switch():
             return GateResult(False, "kill_switch_active")
     except Exception as exc:  # noqa: BLE001
-        _gate_failopen("kill_switch", signal, exc, _swallowed)
+        _gate_failopen("kill_switch", signal, exc, _swallowed, strategy, cycle_ts)
 
     # CHECK 2 — daily loss limit.
     try:
@@ -65,7 +71,7 @@ async def check_gate(signal: Signal, db):
             )
             return GateResult(False, "daily_loss_limit")
     except Exception as exc:  # noqa: BLE001
-        _gate_failopen("daily_loss", signal, exc, _swallowed)
+        _gate_failopen("daily_loss", signal, exc, _swallowed, strategy, cycle_ts)
 
     # CHECK 4 — max open trades + 70% equity deployment cap.
     try:
@@ -81,9 +87,9 @@ async def check_gate(signal: Signal, db):
             if equity_now > 0 and deployed >= equity_now * config.MAX_EQUITY_DEPLOYED_PCT:
                 return GateResult(False, "max_equity_deployed")
         except Exception as exc:  # noqa: BLE001
-            _gate_failopen("deployment_cap", signal, exc, _swallowed)
+            _gate_failopen("deployment_cap", signal, exc, _swallowed, strategy, cycle_ts)
     except Exception as exc:  # noqa: BLE001
-        _gate_failopen("max_open", signal, exc, _swallowed)
+        _gate_failopen("max_open", signal, exc, _swallowed, strategy, cycle_ts)
 
     # CHECK 5 — Kalshi slot limit.
     try:
@@ -92,15 +98,15 @@ async def check_gate(signal: Signal, db):
             if len(kalshi_trades) >= config.KALSHI_MAX_OPEN:
                 return GateResult(False, "kalshi_max_open")
     except Exception as exc:  # noqa: BLE001
-        _gate_failopen("kalshi", signal, exc, _swallowed)
+        _gate_failopen("kalshi", signal, exc, _swallowed, strategy, cycle_ts)
 
     if _swallowed:
         try:
             log.warning(
-                "GATE_PASSED_ON_SWALLOW symbol=%s market=%s direction=%s checks=%s — under "
-                "fail-closed this entry would REJECT",
-                getattr(signal, "symbol", "?"), getattr(signal, "market", "?"),
-                getattr(signal, "direction", "?"), ",".join(_swallowed),
+                "GATE_PASSED_ON_SWALLOW symbol=%s market=%s strategy=%s direction=%s cycle_ts=%s "
+                "checks=%s — under fail-closed this entry would REJECT",
+                getattr(signal, "symbol", "?"), getattr(signal, "market", "?"), strategy or "?",
+                getattr(signal, "direction", "?"), cycle_ts or "?", ",".join(_swallowed),
             )
         except Exception:  # noqa: BLE001
             pass
