@@ -279,15 +279,21 @@ async def execute_trade(signal: Signal, brain_result, db):
 
 
 def _assert_live_orders_allowed(venue: str) -> None:
-    """Fail-closed execution boundary. Refuse any live order unless the operator has
-    deliberately flipped all three paper-only flags (config.live_orders_allowed()).
-    They default safe, so this ALWAYS raises today — the live-order stubs below are
-    unreachable for live. Adds no live path; can only block, never enable."""
-    if not config.live_orders_allowed():
+    """Fail-closed execution boundary. Refuse any live order unless config.live_orders_allowed()
+    is True; if that check itself raises, refuse too (fail-closed). They default safe, so this
+    ALWAYS raises today — the live-order stubs below are unreachable for live. Adds no live path."""
+    try:
+        allowed = config.live_orders_allowed()
+    except Exception as exc:  # noqa: BLE001 — a raising flag check must still block
+        raise RuntimeError(
+            "BLOCKED live %s order — flag check errored (%r); fail-closed" % (venue, exc)
+        ) from exc
+    if not allowed:
         raise RuntimeError(
             "BLOCKED live %s order — paper-only safety engaged "
-            "(PAPER_ONLY=%s LIVE_TRADING_ENABLED=%s KRAKEN_LIVE_ENABLED=%s)"
-            % (venue, config.PAPER_ONLY, config.LIVE_TRADING_ENABLED, config.KRAKEN_LIVE_ENABLED)
+            "(PAPER_MODE=%s PAPER_ONLY=%s LIVE_TRADING_ENABLED=%s KRAKEN_LIVE_ENABLED=%s)"
+            % (venue, config.PAPER_MODE, config.PAPER_ONLY,
+               config.LIVE_TRADING_ENABLED, config.KRAKEN_LIVE_ENABLED)
         )
 
 

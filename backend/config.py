@@ -36,25 +36,39 @@ PAPER_MODE             = True
 # (see live_orders_allowed() + executor._assert_live_orders_allowed). Adding these
 # introduces NO live path — the boundary they create can only BLOCK, never enable.
 def _fail_closed_bool(env_name: str, *, safe_default: bool) -> bool:
-    """Parse a bool env var; return safe_default on unset/unparseable (fail-closed)."""
-    raw = os.getenv(env_name)
-    if raw is None:
+    """Parse a bool env var; return safe_default on unset/unparseable AND on any
+    exception during parsing (a raising parser must never enable live — fail-closed)."""
+    try:
+        raw = os.getenv(env_name)
+        if raw is None:
+            return safe_default
+        val = raw.strip().lower()
+        if val in ("1", "true", "yes", "on"):
+            return True
+        if val in ("0", "false", "no", "off"):
+            return False
+        return safe_default  # unparseable -> safe
+    except Exception:  # noqa: BLE001 — a raising parser fails closed
         return safe_default
-    val = raw.strip().lower()
-    if val in ("1", "true", "yes", "on"):
-        return True
-    if val in ("0", "false", "no", "off"):
-        return False
-    return safe_default  # unparseable -> safe
 
 PAPER_ONLY           = _fail_closed_bool("PAPER_ONLY", safe_default=True)
 LIVE_TRADING_ENABLED = _fail_closed_bool("LIVE_TRADING_ENABLED", safe_default=False)
 KRAKEN_LIVE_ENABLED  = _fail_closed_bool("KRAKEN_LIVE_ENABLED", safe_default=False)
 
 def live_orders_allowed() -> bool:
-    """True ONLY if an operator deliberately enabled all three live flags. Any single
-    safe value (PAPER_ONLY True, or either live flag False) forbids live orders."""
-    return LIVE_TRADING_ENABLED and KRAKEN_LIVE_ENABLED and not PAPER_ONLY
+    """True ONLY when an operator has deliberately disabled BOTH paper gates AND enabled
+    BOTH live flags, verified by STRICT IDENTITY (`is True`/`is False`) so a truthy string
+    ('true','1','yes') or truthy int can NEVER satisfy it, and PAPER_MODE=True alone forces
+    a block. Any exception while evaluating the flags returns False (fail-closed)."""
+    try:
+        return (
+            PAPER_MODE is False
+            and PAPER_ONLY is False
+            and LIVE_TRADING_ENABLED is True
+            and KRAKEN_LIVE_ENABLED is True
+        )
+    except Exception:  # noqa: BLE001 — any evaluation error fails closed
+        return False
 
 # --- Engine cutover -------------------------------------------------------
 # The deterministic raid/ engine (typed candidates, 10 strategies, risk manager)
