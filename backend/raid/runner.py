@@ -32,7 +32,10 @@ from signals import Signal
 from raid.core import features as F
 from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
-from raid.core.risk import PortfolioRiskManager, PortfolioState, RiskTier, graduated_size_decision
+from raid.core.risk import (
+    TIER_LIMITS, PortfolioRiskManager, PortfolioState, RiskTier, aggregate_open_risk,
+    effective_tier, graduated_size_decision,
+)
 from raid.core.strategy import StrategyContext, StrategyMode
 from raid.core.universe import (
     capped_leverage, compute_universe_rankings, concentration_reject_reason, has_opposite,
@@ -357,6 +360,26 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         log.warning("RAID ENGINE: DRAWDOWN %.1f%% >= 15%% — pausing all entries this cycle", drawdown * 100)
     elif eff_lev != config.LEVERAGE_MULTIPLIER:
         log.info("RAID ENGINE: DRAWDOWN %.1f%% — leverage reduced to %dx", drawdown * 100, eff_lev)
+
+    # B6 measure-first: aggregate REAL open risk and LOG what the (currently inert, zeroed)
+    # portfolio-risk gates WOULD block if fed it. total-open + correlated-cluster exist in
+    # risk.assess but the runner feeds PortfolioState(equity, peak) only; same-direction has no gate
+    # at all. Measure-only — NOT fed into risk.assess (the enforcement wiring is a later change).
+    try:
+        _rt = effective_tier(_RISK.base_tier, drawdown)
+        _tl = TIER_LIMITS[_rt]
+        _agg = aggregate_open_risk(open_trades, equity, config.CORRELATED_PAIRS)
+        log.info(
+            "PORTFOLIO_RISK_SHADOW tier=%s open=%d total=%.3f%%/cap%.2f%%%s long=%.3f%% short=%.3f%% "
+            "max_cluster=%.3f%%/cap%.2f%%%s — measure-only (gates fed zeroed state)",
+            _rt.name, len(open_trades), _agg["total"] * 100, _tl.max_total_open_risk_pct * 100,
+            " OVER" if _agg["total"] > _tl.max_total_open_risk_pct else "",
+            _agg["long"] * 100, _agg["short"] * 100,
+            _agg["max_cluster"] * 100, _tl.max_cluster_risk_pct * 100,
+            " OVER" if _agg["max_cluster"] > _tl.max_cluster_risk_pct else "",
+        )
+    except Exception as _pr_exc:  # noqa: BLE001 — measurement must never affect the cycle
+        log.error("PORTFOLIO_RISK_SHADOW failed (skipped): %s", _pr_exc)
 
     # --- Cross-sectional universe ranking (computed ONCE per cycle) ---
     rankings = compute_universe_rankings(scan_results)

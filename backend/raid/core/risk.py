@@ -116,6 +116,42 @@ def graduated_size_decision(
     return (True, 1.0, "cost/R ok")
 
 
+def aggregate_open_risk(open_trades, equity, correlated_groups=None) -> dict:
+    """B6 measure-first: aggregate REAL open risk from current open positions so the (currently
+    inert, zeroed) portfolio-risk gates can be sized. Per trade, dollar risk-to-stop = size_usd *
+    |entry - sl| / entry (skipped when data is missing). Returns fractions of equity: total, long,
+    short, and the max correlated-cluster. Pure; feeds NO decision (measurement only)."""
+    eq = float(equity or 0.0)
+    if eq <= 0:
+        return {"total": 0.0, "long": 0.0, "short": 0.0, "max_cluster": 0.0}
+    sym_cluster: dict = {}
+    for i, grp in enumerate(correlated_groups or []):
+        for s in grp:
+            sym_cluster[s] = i
+    total = long = short = 0.0
+    cluster: dict = {}
+    for t in open_trades or []:
+        try:
+            entry = float(t.get("entry_price") or 0.0)
+            sl = float(t.get("sl") or 0.0)
+            size = float(t.get("size_usd") or 0.0)
+            if entry <= 0 or sl <= 0 or size <= 0:
+                continue
+            risk_d = size * abs(entry - sl) / entry
+        except (TypeError, ValueError):
+            continue
+        total += risk_d
+        if t.get("direction") in ("long", "yes"):
+            long += risk_d
+        else:
+            short += risk_d
+        ci = sym_cluster.get(t.get("symbol"))
+        if ci is not None:
+            cluster[ci] = cluster.get(ci, 0.0) + risk_d
+    max_cluster = max(cluster.values()) if cluster else 0.0
+    return {"total": total / eq, "long": long / eq, "short": short / eq, "max_cluster": max_cluster / eq}
+
+
 @dataclass
 class PortfolioState:
     equity: Decimal
