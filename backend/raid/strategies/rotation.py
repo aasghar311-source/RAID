@@ -10,11 +10,11 @@ via ctx.extras['universe_rankings'] (see raid.core.universe). They are distinct:
     when they fall out of the leaderboard.
   * C7 formally ranks the whole universe and holds the top quintile (momentum
     persistence) in TREND_UP or RANGE; it does not re-add a name it already holds.
-    Bottom-quintile laggards are SHORT candidates but are gated to a TREND_DOWN regime
-    (mirror of C3). Because C7's eligible_regimes are {TREND_UP, RANGE}, it never runs in
-    TREND_DOWN, so its shorts are SHADOW-ONLY — never booked live. (This removed the
-    measured ~-$33 C7-short-in-RANGE bleed; the prior docstring's "shadow only" claim was
-    stale — the code booked live shorts whenever CAP_SHORT was granted.)
+    Bottom-quintile laggards are SHORT candidates gated to a TREND_DOWN regime (mirror of
+    C3), and further gated by config.C7_SHORT_ENABLED. When that flag is True, C7 books the
+    short (paper) via the shared C3-audited short path; when False, the short is shadow-only
+    (never booked). Enabling the flag reverses the deliberate ~-$33 C7-short-in-RANGE bleed
+    gate — operator-authorized, measured independently as (RAID-C7, direction=short).
 
 Neither sizes positions (the risk manager does) and neither ever opens a symbol that
 already has an open position (no stacking; also dedupes C6 vs C7 across cycles).
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import config
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.provider import CAP_SHORT, CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
@@ -136,7 +137,11 @@ class C7CrossSectionalMomentum(Strategy):
     strategy_id = "RAID-C7"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.TREND_UP, MarketRegime.RANGE})
+    # TREND_DOWN is now eligible so the short sleeve is REACHABLE; whether it actually books a short
+    # is gated at runtime by config.C7_SHORT_ENABLED (below). The long branch is guarded to never
+    # fire in TREND_DOWN, so with the flag OFF, C7 produces no candidates in TREND_DOWN (same net
+    # outcome as when TREND_DOWN was ineligible) — the flag, not the regime set, is the on/off.
+    eligible_regimes = frozenset({MarketRegime.TREND_UP, MarketRegime.RANGE, MarketRegime.TREND_DOWN})
     atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
@@ -150,6 +155,8 @@ class C7CrossSectionalMomentum(Strategy):
 
         # Top quintile → long winner (hold; do not re-add a name already open).
         if me["rank"] <= quintile:
+            if ctx.market_regime == MarketRegime.TREND_DOWN:
+                return []                              # guard: never long a winner in a downtrend
             if _already_open(ctx):
                 return []
             if me["return_24h"] <= 0:
@@ -157,16 +164,16 @@ class C7CrossSectionalMomentum(Strategy):
             c = _long_market_candidate(self.strategy_id, ctx)
             return [c] if c else []
 
-        # Bottom quintile → SHORT the relative laggard, but ONLY in a TREND_DOWN regime
-        # (mirror of C3's gating: never short a weak name in a rising/ranging tape — that is
-        # exactly the -$33 measured C7-short-in-RANGE bleed). C7's eligible_regimes are
-        # {TREND_UP, RANGE}, so it never actually runs in TREND_DOWN — hence C7 shorts are
-        # SHADOW-ONLY (never booked live). Re-enabling later = add TREND_DOWN to eligible_regimes
-        # AND guard the long branch. Longs above are unchanged.
+        # Bottom quintile → SHORT the relative laggard, but ONLY in a TREND_DOWN regime (mirror of
+        # C3's gating: never short a weak name in a rising/ranging tape — that was the ~-$33 measured
+        # C7-short-in-RANGE bleed). Gated by config.C7_SHORT_ENABLED (paper sleeve; ON RECORD it
+        # reverses that -$33 decision, operator-authorized). Flag OFF => fall through to shadow-log,
+        # never booked. Reuses the shared (C3-audited) short path via _short_market_candidate.
         if me["rank"] > n - quintile:
             if _already_open(ctx):
                 return []                                  # hold; don't stack
-            if (ctx.market_regime == MarketRegime.TREND_DOWN
+            if (config.C7_SHORT_ENABLED
+                    and ctx.market_regime == MarketRegime.TREND_DOWN
                     and CAP_SHORT in ctx.capabilities and me["return_24h"] < 0):
                 c = _short_market_candidate(self.strategy_id, ctx)
                 return [c] if c else []

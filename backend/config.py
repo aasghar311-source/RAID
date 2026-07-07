@@ -147,6 +147,14 @@ ATR_STOP_MAX       = 0.040    # 4.0% ceiling
 # blocks ONLY zero/missing (a genuine small positive ratio passes); raise later to test a thin-
 # volume threshold without another refactor. HARD-ZERO ONLY — not a thin filter.
 MIN_VOLUME_RATIO   = 0.0
+# C7 short sleeve (PAPER). Independent, runtime-checked flag: when True, C7 shorts the bottom-
+# quintile laggard in a TREND_DOWN regime (mirror of C3's short path). OFF => C7 shorts stay
+# shadow-only (no C7 shorts booked; C3 and C7-long unaffected). ON RECORD: enabling this REVERSES a
+# deliberate risk decision to disable a sleeve with MEASURED NEGATIVE expectancy (the ~-$33
+# C7-short-in-RANGE bleed). Operator-authorized to collect C7-short data on the fresh window;
+# C7-short is measured independently via (strategy=RAID-C7, direction=short) and independently
+# killable by flipping this to False. PAPER ONLY — no live orders, no leverage change.
+C7_SHORT_ENABLED   = True
 # TP scales off the per-pair stop to keep the entry gate HONEST after the real 1.04% round-trip:
 # tp_dist = RR_TARGET_NET*(stop + cost) + cost -> net_rr == RR_TARGET_NET (>= every min_net_rr
 # 1.20/1.25/1.30). RR is held at this honest target; the stop/TP DISTANCES vary per pair.

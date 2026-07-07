@@ -375,24 +375,32 @@ def test_c3_generates_short_with_correct_geometry():
     assert float(c.targets[0]) < float(c.reference_price)   # short TP BELOW entry
 
 
-def test_c7_short_gated_to_trend_down_shadow_only():
-    # Commit 3: C7 shorts are gated to TREND_DOWN (mirror C3). C7's eligible_regimes are
-    # {TREND_UP, RANGE}, so it never runs in TREND_DOWN -> shorts are SHADOW-ONLY live.
+def test_c7_short_flag_gated_to_trend_down():
+    # C7 shorts are gated to TREND_DOWN (mirror C3) AND to config.C7_SHORT_ENABLED. TREND_DOWN is
+    # now ELIGIBLE (so the short is reachable); the flag decides book (paper) vs shadow-only.
+    # Enabling reversed the deliberate ~-$33 C7-short-in-RANGE bleed gate (see rotation.py).
+    import config
     from raid.strategies.rotation import C7CrossSectionalMomentum
     c7 = C7CrossSectionalMomentum()
-    # In RANGE, even WITH CAP_SHORT + a falling name: NO live short now (was the -$33 bleed);
-    # shadow-logged instead.
-    ctx = _ctx(MarketRegime.RANGE, extras={"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}},
-               caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
-    assert c7.generate_candidates(ctx) == []
-    assert ctx.extras.get("_c7_shadow_shorts")
-    # The gate logic books a short ONLY in TREND_DOWN (proves the mirror-of-C3 condition)...
-    ctx2 = _ctx(MarketRegime.TREND_DOWN, extras={"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}},
-                caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
-    cands = c7.generate_candidates(ctx2)
-    assert len(cands) == 1 and cands[0].direction == Direction.SHORT and cands[0].strategy_id == "RAID-C7"
-    # ...but production never reaches it: C7 is NOT eligible in TREND_DOWN -> shadow-only live.
-    assert c7.is_eligible(ctx2) is False
+    laggard = {"universe_rankings": {"SOLUSD": _rank(10, 10, ret=-0.05, ram=-0.5)}}
+    # RANGE: never a live short regardless of the flag (short branch requires TREND_DOWN) -> shadow.
+    ctx_r = _ctx(MarketRegime.RANGE, extras=laggard, caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
+    assert c7.generate_candidates(ctx_r) == []
+    assert ctx_r.extras.get("_c7_shadow_shorts")
+    # TREND_DOWN is now eligible -> the short is reachable (the enabling change).
+    ctx_d = _ctx(MarketRegime.TREND_DOWN, extras=laggard, caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
+    assert c7.is_eligible(ctx_d) is True
+    try:
+        config.C7_SHORT_ENABLED = True
+        cands = c7.generate_candidates(ctx_d)
+        assert len(cands) == 1 and cands[0].direction == Direction.SHORT and cands[0].strategy_id == "RAID-C7"
+        # Flag OFF -> shadow-only even in TREND_DOWN (independently killable).
+        config.C7_SHORT_ENABLED = False
+        ctx_off = _ctx(MarketRegime.TREND_DOWN, extras=laggard, caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}))
+        assert c7.generate_candidates(ctx_off) == []
+        assert ctx_off.extras.get("_c7_shadow_shorts")
+    finally:
+        config.C7_SHORT_ENABLED = True
 
 
 def test_opposite_direction_protection():
