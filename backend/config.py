@@ -140,6 +140,13 @@ MAX_TP_DISTANCE_PCT = 0.025   # 2.5% max TP distance — was avg 4.62%, 0/314 hi
 ATR_STOP_MULT      = 1.5
 ATR_STOP_MIN       = 0.006    # 0.6% floor
 ATR_STOP_MAX       = 0.040    # 4.0% ceiling
+# Entry data-quality gate (FAIL-CLOSED): reject any candidate whose latest 5m bar has NO traded
+# volume — a zero-volume bar has no real market and any fill on it is fiction. Enforced once in
+# helpers.build_candidate (the single candidate-construction chokepoint) via features.volume_ratio,
+# which is None on missing/insufficient bars and 0.0 when the latest bar volume is 0. Default 0.0
+# blocks ONLY zero/missing (a genuine small positive ratio passes); raise later to test a thin-
+# volume threshold without another refactor. HARD-ZERO ONLY — not a thin filter.
+MIN_VOLUME_RATIO   = 0.0
 # TP scales off the per-pair stop to keep the entry gate HONEST after the real 1.04% round-trip:
 # tp_dist = RR_TARGET_NET*(stop + cost) + cost -> net_rr == RR_TARGET_NET (>= every min_net_rr
 # 1.20/1.25/1.30). RR is held at this honest target; the stop/TP DISTANCES vary per pair.

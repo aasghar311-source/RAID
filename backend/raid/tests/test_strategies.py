@@ -20,13 +20,24 @@ def _feat(**kw) -> FeatureSnapshot:
     return FeatureSnapshot(**base)
 
 
+def _pos_vol_candles(n=25, prior_vol=100.0, latest_vol=200.0):
+    """n 5m bars [ts,o,h,l,c,v]; latest bar 2x the prior average -> volume_ratio 2.0. Positive
+    (satisfies the fail-closed hard-zero gate in build_candidate) AND >= C1's 1.5x breakout
+    confirmation, so the existing emit tests exercise the real positive-volume path (production
+    always has real volume; the old fixtures relied on _volume_confirmed's now-removed fail-open)."""
+    bars = [[i * 300, 100.0, 100.5, 99.5, 100.0, prior_vol] for i in range(n - 1)]
+    bars.append([(n - 1) * 300, 100.0, 100.5, 99.5, 100.0, latest_vol])
+    return bars
+
+
 def _ctx(regime: MarketRegime, feat: FeatureSnapshot, caps=frozenset({CAP_SPOT_LONG}), spread=0.0004) -> StrategyContext:
     return StrategyContext(
         symbol="SOLUSD", instrument_id="SOLUSD", timestamp="2026-07-02T00:00:00Z",
         market_regime=regime, features={"5m": feat},
         market_data_snapshot_id="md", reference_price=Decimal("100"),
         spread_pct=spread, depth_ok=True, capabilities=caps,
-        extras={"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z"},
+        extras={"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z",
+                "candles_5m": _pos_vol_candles()},
     )
 
 

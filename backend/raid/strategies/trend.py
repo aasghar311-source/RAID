@@ -26,20 +26,22 @@ _VOLUME_CONFIRM_MULT = 1.5
 
 def _volume_confirmed(candles, mult: float = _VOLUME_CONFIRM_MULT) -> tuple[bool, float]:
     """(confirmed, ratio) from the raw 5m candles ([...,volume] at index 5). Returns
-    (True, ratio) when the latest bar's volume >= mult x the prior-20 average; (True, 0.0)
-    when there isn't enough data to judge (don't block on missing data — prod always has it)."""
+    (True, ratio) when the latest bar's volume >= mult x the prior-20 average; (False, 0.0)
+    when volume is missing / insufficient / zero-average — FAIL CLOSED (aligned with the shared
+    hard-zero gate in helpers.build_candidate). The 1.5x threshold for positive-volume bars is
+    unchanged."""
     rows = candles or []
     if len(rows) < 21:
-        return True, 0.0
+        return False, 0.0
     try:
         vols = [float(r[5]) for r in rows[-21:] if len(r) > 5]
     except (TypeError, ValueError):
-        return True, 0.0
+        return False, 0.0
     if len(vols) != 21:
-        return True, 0.0
+        return False, 0.0
     avg = sum(vols[:-1]) / 20.0
     if avg <= 0:
-        return True, 0.0
+        return False, 0.0
     ratio = vols[-1] / avg
     return ratio >= mult, ratio
 

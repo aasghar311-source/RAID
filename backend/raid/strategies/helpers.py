@@ -14,6 +14,7 @@ from decimal import Decimal
 import config
 import costs  # backend/costs.py — authoritative cost model
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
+from raid.core.features import volume_ratio
 from raid.core.risk import position_size
 from raid.core.strategy import StrategyContext
 
@@ -67,6 +68,16 @@ def build_candidate(
     running in SHADOW with no equity simply produces structure sized off a nominal
     equity so its scorecard can still be computed.
     """
+    # FAIL-CLOSED hard-zero volume gate (shared — every strategy routes through here). A 5m bar
+    # with no traded volume has no real market, so a fill on it is fiction; reject when the latest
+    # 5m bar volume is 0, or volume is missing/uncomputable (insufficient bars / dead pair). Reuses
+    # the engine's own volume_ratio (None on missing/insufficient, 0.0 on a zero-volume latest bar).
+    # MIN_VOLUME_RATIO=0.0 blocks ONLY zero/missing today — a genuine small positive ratio passes;
+    # raise it later to test a thin-volume threshold. HARD-ZERO ONLY; no other entry condition changed.
+    _vr = volume_ratio(ctx.extras.get("candles_5m"))
+    if _vr is None or _vr <= config.MIN_VOLUME_RATIO:
+        return None
+
     entry = (
         limit_price if entry_type == EntryType.LIMIT and limit_price else
         trigger_price if entry_type == EntryType.STOP and trigger_price else

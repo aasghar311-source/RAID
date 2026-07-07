@@ -37,7 +37,8 @@ def _feat(tf="5m", **kw) -> FeatureSnapshot:
 
 def _ctx(regime, extras=None, symbol="SOLUSD", ref=100.0, caps=frozenset({CAP_SPOT_LONG}),
          features=None) -> StrategyContext:
-    ex = {"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z"}
+    ex = {"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z",
+          "candles_5m": _flat_candles()}  # positive-volume bars: satisfy the hard-zero volume gate
     if extras:
         ex.update(extras)
     return StrategyContext(
