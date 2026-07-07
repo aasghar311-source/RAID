@@ -110,6 +110,12 @@ LEVERAGE_DERISKING = {
     0.15: 0,     # 15% drawdown -> pause all entries
     0.20: -1,    # 20% drawdown -> hard shutdown (kill switch)
 }
+# B1: persist the drawdown high-water mark (peak equity) + ladder/pause state in the DB
+# (drawdown_state table, migration 005) so a worker restart/redeploy cannot clear a drawdown
+# pause — the in-memory runner._peak_equity previously re-seeded to 0 on boot. True = load/write
+# drawdown_state, falling back to in-memory if the table is absent or the db lacks the accessor
+# (then behaviour is identical to the legacy in-memory-only path). False = legacy. Reversible.
+PERSIST_DRAWDOWN_STATE = True
 HIGH_CONVICTION_THRESHOLD     = 0.72        # prob floor for size boost when BEHIND
 CRITICAL_CONVICTION_THRESHOLD = 0.78        # prob floor for size boost when CRITICAL
 

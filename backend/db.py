@@ -628,6 +628,56 @@ async def capture_ohlcv_5m(rows: list) -> int:
         return 0
 
 
+# ── DRAWDOWN STATE (persisted high-water mark; survives restart) ──────────────
+# B1: the drawdown ladder's peak-equity high-water mark lives here (single row id=1) so a worker
+# restart/redeploy cannot reset it (the in-memory runner._peak_equity re-seeds to 0 on boot).
+_drawdown_state_ok = True   # flips False if the table is absent -> in-memory fallback thereafter
+
+
+async def get_drawdown_state():
+    """Return the persisted drawdown_state row (id=1), or None if absent/empty/errored. None =>
+    the caller falls back to the in-memory high-water mark (a missing table must never fabricate a
+    drawdown/pause). Self-disables on a table-absent error so a premature deploy quietly no-ops."""
+    global _drawdown_state_ok
+    if not _drawdown_state_ok:
+        return None
+    try:
+        res = await supabase.table("drawdown_state").select("*").eq("id", 1).limit(1).execute()
+        return res.data[0] if res.data else None
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _drawdown_state_ok = False
+            log.error("get_drawdown_state: table 'drawdown_state' absent — persistence DISABLED "
+                      "for this process (apply migration 005): %s", exc)
+        else:
+            log.warning("get_drawdown_state failed (%s) — in-memory fallback this cycle", exc)
+        return None
+
+
+async def upsert_drawdown_state(fields: dict) -> bool:
+    """Best-effort UPSERT of the single drawdown_state row (id=1). Returns True on success, False
+    otherwise. Never raises into the trade cycle. Self-disables on a table-absent error."""
+    global _drawdown_state_ok
+    if not _drawdown_state_ok:
+        return False
+    try:
+        payload = dict(fields)
+        payload["id"] = 1
+        payload["updated_at"] = _now_iso()
+        res = await supabase.table("drawdown_state").upsert(payload, on_conflict="id").execute()
+        return bool(res.data)
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _drawdown_state_ok = False
+            log.error("upsert_drawdown_state: table 'drawdown_state' absent — persistence DISABLED "
+                      "for this process (apply migration 005): %s", exc)
+        else:
+            log.error("upsert_drawdown_state failed (%s)", exc)
+        return False
+
+
 # ── PREDICTIONS ───────────────────────────────────────────────────────────
 
 async def log_prediction(entry: dict):

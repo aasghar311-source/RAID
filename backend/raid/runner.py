@@ -119,6 +119,17 @@ def _effective_leverage(drawdown_pct: float):
     return min(lev, config.MAX_LEVERAGE), None
 
 
+def resolve_peak(persisted_peak: float, in_memory_peak: float, starting_equity: float, equity: float) -> float:
+    """Drawdown high-water mark = max(persisted peak, in-memory peak, starting equity, current
+    equity). Pure + testable. Seeding from the PERSISTED peak is what stops a restart from clearing
+    a drawdown pause (the in-memory global re-seeds to 0 on boot). With persistence off / no
+    persisted value, this reduces to the legacy max(in_memory_peak, starting, equity)."""
+    return max(
+        float(persisted_peak or 0.0), float(in_memory_peak or 0.0),
+        float(starting_equity or 0.0), float(equity or 0.0),
+    )
+
+
 def _rotation_pnl(direction: str, entry: float, exit_price: float, size_usd: float) -> float:
     """Realized USD pnl net of the real all-in round-trip cost — mirrors executor.compute_pnl
     via the single source costs.realized_round_trip_cost_pct()."""
@@ -268,11 +279,30 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     # (_effective_leverage below: 6%->2x, 10%->1x, 15%->pause, 20%->shutdown) and the manual
     # kill_switch (honored by worker._brain_entry_gate). The consec-loss ALERT still fires.
 
-    # --- Leverage + drawdown de-risking (peak high-water mark) ---
+    # --- Leverage + drawdown de-risking (PERSISTED high-water mark; survives restart) ---
     global _peak_equity
-    _peak_equity = max(_peak_equity, config.STARTING_EQUITY, equity)
+    # Seed the high-water mark from the PERSISTED peak (drawdown_state) so a restart/redeploy cannot
+    # reset it below the true pre-restart peak — the redeploy-clears-pause bug (B1). Falls back to
+    # in-memory when the flag is off or the db lacks the accessor (then identical to the legacy
+    # max(_peak_equity, STARTING, equity)); persistence self-disables if the table is absent.
+    _persist_dd = config.PERSIST_DRAWDOWN_STATE and hasattr(db, "get_drawdown_state")
+    _persisted_peak = 0.0
+    if _persist_dd:
+        _dd_row = await db.get_drawdown_state()
+        if _dd_row:
+            _persisted_peak = float(_dd_row.get("peak_equity") or 0.0)
+    _peak_equity = resolve_peak(_persisted_peak, _peak_equity, config.STARTING_EQUITY, equity)
     drawdown = (_peak_equity - equity) / _peak_equity if _peak_equity > 0 else 0.0
     eff_lev, halt = _effective_leverage(drawdown)
+    _pause_state = ("shutdown" if halt == "shutdown"
+                    else "paused" if halt == "pause"
+                    else "reduced" if eff_lev != config.LEVERAGE_MULTIPLIER
+                    else "none")
+    if _persist_dd and hasattr(db, "upsert_drawdown_state"):
+        await db.upsert_drawdown_state({
+            "peak_equity": _peak_equity, "drawdown_pct": drawdown,
+            "leverage_limit": (0 if halt else eff_lev), "pause_state": _pause_state,
+        })
     if halt == "shutdown":
         log.critical("RAID ENGINE: DRAWDOWN %.1f%% >= 20%% — HARD SHUTDOWN (setting kill switch)", drawdown * 100)
         try:
