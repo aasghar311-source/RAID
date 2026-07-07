@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from supabase import acreate_client, AsyncClient
@@ -230,6 +231,99 @@ async def log_trade(trade: dict):
     return ""
 
 
+# ── B7: signal-quality measurement (measure-only; per-strategy/regime/direction accuracy + R) ──
+_STRATEGY_TAG_RE = re.compile(r"^(RAID-C\d+)")
+_signal_outcomes_ok = True
+
+
+def _to_float(v):
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_strategy_tag(reasoning):
+    if not reasoning:
+        return None
+    m = _STRATEGY_TAG_RE.match(str(reasoning))
+    return m.group(1) if m else None
+
+
+def build_signal_outcome_row(trade, trade_id, exit_price, pnl, reason, hold_minutes):
+    """B7 measure-only: build a signal_outcomes row from a closing trade. PURE; no I/O. Records the
+    generating strategy, direction, the classifier's regime-at-entry AND a completed-bar direction
+    reference (the stored 5m entry-slope sign) + the realized ground-truth move, net-of-cost R,
+    MFE/MAE, hold time, and whether the direction was correct. Missing inputs -> that field is None
+    (never fabricated). Feeds NO decision — record only."""
+    t = trade or {}
+    direction = t.get("direction")
+    long_like = direction in ("long", "yes")
+    entry = _to_float(t.get("entry_price"))
+    exit_p = _to_float(exit_price)
+    size = _to_float(t.get("size_usd"))
+    stop_dist = _to_float(t.get("initial_stop_distance_pct"))
+    realized_dir = dir_correct = None
+    if entry is not None and exit_p is not None and entry > 0:
+        realized_dir = "up" if exit_p > entry else "down" if exit_p < entry else "flat"
+        dir_correct = (exit_p > entry) if long_like else (exit_p < entry)
+    _pnl = _to_float(pnl)
+    realized_r = None
+    if size and stop_dist and size > 0 and stop_dist > 0 and _pnl is not None:
+        realized_r = round(_pnl / (size * stop_dist), 4)   # net-of-cost R (pnl is already net)
+    slope = _to_float(t.get("entry_slope"))
+    slope_dir = None if slope is None else ("up" if slope > 0 else "down" if slope < 0 else "flat")
+    return {
+        "trade_id": trade_id,
+        "strategy_id": _parse_strategy_tag(t.get("claude_reasoning")),
+        "direction": direction,
+        "regime_at_entry": t.get("market_regime"),
+        "entry_slope": slope,
+        "entry_slope_direction": slope_dir,
+        "realized_price_direction": realized_dir,
+        "direction_correct": dir_correct,
+        "entry_price": entry,
+        "exit_price": exit_p,
+        "realized_r": realized_r,
+        "net_pnl": (round(_pnl, 6) if _pnl is not None else None),
+        "mfe_pct": _to_float(t.get("peak_pnl_pct")),
+        "mae_pct": _to_float(t.get("mae_pct")),
+        "hold_minutes": hold_minutes,
+        "close_reason": reason,
+    }
+
+
+async def _record_signal_outcome(trade, trade_id, exit_price, pnl, reason, hold_minutes):
+    """B7 measure-only: emit a greppable SIGNAL_OUTCOME log (ALWAYS) and persist to signal_outcomes
+    (best-effort, self-disabling if absent). Never raises into the close path; feeds no decision."""
+    global _signal_outcomes_ok
+    try:
+        row = build_signal_outcome_row(trade, trade_id, exit_price, pnl, reason, hold_minutes)
+    except Exception as exc:  # noqa: BLE001
+        log.error("signal_outcome build failed (%s)", exc)
+        return
+    log.info(
+        "SIGNAL_OUTCOME trade=%s strat=%s dir=%s regime=%s slope_dir=%s realized_dir=%s correct=%s "
+        "R=%s net_pnl=%s mfe=%s mae=%s hold_min=%s reason=%s",
+        row["trade_id"], row["strategy_id"], row["direction"], row["regime_at_entry"],
+        row["entry_slope_direction"], row["realized_price_direction"], row["direction_correct"],
+        row["realized_r"], row["net_pnl"], row["mfe_pct"], row["mae_pct"], row["hold_minutes"],
+        row["close_reason"],
+    )
+    if not _signal_outcomes_ok:
+        return
+    try:
+        await supabase.table("signal_outcomes").insert(row).execute()
+    except Exception as exc:  # noqa: BLE001 — measurement must never affect the close
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _signal_outcomes_ok = False
+            log.error("signal_outcomes: table absent — DB recording DISABLED for this process "
+                      "(apply migration 008); SIGNAL_OUTCOME logs still emit: %s", exc)
+        else:
+            log.error("signal_outcome insert failed (%s)", exc)
+
+
 async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str, extra: dict | None = None):
     """Mark a trade closed with exit price, realized pnl, close time, and reason.
 
@@ -243,9 +337,15 @@ async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str,
         "close_time": _now_iso(),
         "close_reason": reason,
     }
+    _trow: dict = {}
     try:
-        _row = await supabase.table("trades").select("open_time").eq("id", trade_id).limit(1).execute()
-        _ot = (_row.data[0].get("open_time") if _row and _row.data else None)
+        # Also fetch the entry-side columns B7 needs (single query — no extra round trip).
+        _row = await supabase.table("trades").select(
+            "open_time, entry_price, direction, size_usd, symbol, market_regime, claude_reasoning, "
+            "initial_stop_distance_pct, peak_pnl_pct, mae_pct, entry_slope"
+        ).eq("id", trade_id).limit(1).execute()
+        _trow = (_row.data[0] if _row and _row.data else {})
+        _ot = _trow.get("open_time")
         if _ot:
             _o = datetime.fromisoformat(str(_ot).replace("Z", "+00:00"))
             if _o.tzinfo is None:
@@ -255,10 +355,19 @@ async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str,
         pass
     if extra:
         fields.update(extra)
+    _closed_ok = False
     try:
         await supabase.table("trades").update(fields).eq("id", trade_id).execute()
+        _closed_ok = True
     except Exception as exc:  # noqa: BLE001
         log.error("close_trade failed: %s", exc)
+    # B7 measure-only: record the signal outcome (accuracy + R ledger) on a SUCCESSFUL close.
+    # Best-effort; never affects the close; self-disables if signal_outcomes is absent.
+    if _closed_ok:
+        try:
+            await _record_signal_outcome(_trow, trade_id, exit_price, pnl, reason, fields.get("hold_minutes"))
+        except Exception as exc:  # noqa: BLE001 — measurement must never affect the close
+            log.error("signal_outcome hook failed (%s)", exc)
 
 
 async def update_trade_fields(trade_id: str, fields: dict):
