@@ -89,13 +89,17 @@ def build_cutover_registry():
 
 _REGISTRY = build_cutover_registry()
 
-# Startup notices for the strategies enabled 2026-07-03 (margin/futures verified on account).
-log.info("RAID-C3 enabled — short trend breakdown (margin verified)")
-log.info("C7 shorts enabled — cross-sectional momentum short sleeve active")
-log.info("RAID-C8 enabled — statistical pairs (data-gated: produces candidates only when cointegration data available)")
-log.info("RAID-C9 enabled — funding carry (data-gated: needs two-leg perp/spot execution; funding rates are available)")
-log.info("RAID-C1 un-quarantined — breakout now requires 1.5x volume confirmation; %d paper strategies (8 producing; C8/C9 data-gated stubs)",
-         len(_REGISTRY.paper()))
+# Startup notices — gated on the ACTUAL config flags + registry so the boot log tells the truth
+# (not hardcoded "enabled" claims). Log text only; no behaviour change.
+_paper_ids = sorted(s.strategy_id for s in _REGISTRY.paper())
+log.info("RAID registry: %d paper strategies — %s", len(_paper_ids), ", ".join(_paper_ids) or "none")
+log.info(
+    "C7 short sleeve: %s",
+    "PAPER — TREND_DOWN shorts booked (C7_SHORT_ENABLED=True)" if config.C7_SHORT_ENABLED
+    else "SHADOW-ONLY — no C7 shorts booked (C7_SHORT_ENABLED=False)",
+)
+log.info("RAID-C3: short trend breakdown (paper; shorts require per-pair margin eligibility)")
+log.info("RAID-C8/C9: registered paper but DATA-GATED stubs — produce 0 candidates")
 
 # Peak equity high-water mark for drawdown-based leverage de-risking. Module-level: on a
 # restart it re-seeds from max(STARTING_EQUITY, current) — conservative (floors drawdown at
