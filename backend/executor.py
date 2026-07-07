@@ -378,10 +378,22 @@ def _buffer_quote_path(trade, price, quote, side, price_age):
 
 def _spawn_flush(coro):
     """Fire-and-forget a batched quote-path flush without awaiting it (keeps the exit loop
-    non-blocking). Holds a task reference so it is not GC'd mid-flight; drops it on completion."""
+    non-blocking). Holds a task reference so it is not GC'd mid-flight; on completion it RETRIEVES
+    any exception (so a failed flush is caught + logged, never an orphaned unhandled-task warning)
+    and drops the reference. A flush failure can never affect the exit loop."""
     t = asyncio.create_task(coro)
     _quote_flush_tasks.add(t)
-    t.add_done_callback(_quote_flush_tasks.discard)
+
+    def _done(task):
+        _quote_flush_tasks.discard(task)
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            log.error("quote-path flush failed (caught, exit loop unaffected): %r", exc)
+
+    t.add_done_callback(_done)
     return t
 
 
