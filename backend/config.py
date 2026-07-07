@@ -196,7 +196,11 @@ MIN_VOLUME_RATIO   = 0.0
 # C7-short-in-RANGE bleed). Operator-authorized to collect C7-short data on the fresh window;
 # C7-short is measured independently via (strategy=RAID-C7, direction=short) and independently
 # killable by flipping this to False. PAPER ONLY — no live orders, no leverage change.
-C7_SHORT_ENABLED   = True
+# 2026-07-07 (Omega rebuild): RETURNED TO SHADOW. False => C7 bottom-quintile laggards are
+# shadow-logged (_c7_shadow_shorts), never booked; C3 and C7-long are unaffected. Re-enable later
+# through the promotion track once the market-state spine defines RISK_OFF. Reversible: flip to
+# True. PAPER ONLY — no live orders, no leverage change.
+C7_SHORT_ENABLED   = False
 # TP scales off the per-pair stop to keep the entry gate HONEST after the real 1.04% round-trip:
 # tp_dist = RR_TARGET_NET*(stop + cost) + cost -> net_rr == RR_TARGET_NET (>= every min_net_rr
 # 1.20/1.25/1.30). RR is held at this honest target; the stop/TP DISTANCES vary per pair.

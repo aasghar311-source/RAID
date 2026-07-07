@@ -102,3 +102,10 @@ def test_short_pnl_sign_net_of_cost():
     from executor import compute_pnl
     assert abs(compute_pnl("short", 100.0, 95.0, 1000.0) - 39.6) < 1e-6    # fell -> +50 gross -10.4 fee
     assert abs(compute_pnl("short", 100.0, 105.0, 1000.0) - (-60.4)) < 1e-6  # rose -> -50 gross -10.4 fee
+
+
+# (h) SHIPPED default is shadow (False) — robust to in-suite mutation via a fresh reload.
+def test_c7_short_ships_disabled_by_default():
+    import importlib
+    importlib.reload(config)                    # re-execute config.py from source (env unchanged)
+    assert config.C7_SHORT_ENABLED is False     # the shipped default is shadow, not live-booking
