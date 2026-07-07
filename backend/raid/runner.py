@@ -174,6 +174,41 @@ def _spread_depth(order_book):
     return 0.0004, True
 
 
+def _real_spread_depth(order_book):
+    """B3: REAL spread + total executable depth (USD) from the scanner's ACTUAL bid_walls/ask_walls
+    shape. The live decision path still uses _spread_depth (which reads the wrong 'bids'/'asks' keys
+    and always returns the 0.0004 fallback); this is the measure-first fix — computed and LOGGED,
+    not yet fed into decisions. Returns (spread_pct, depth_usd, ok)."""
+    try:
+        bids = (order_book or {}).get("bid_walls") or []
+        asks = (order_book or {}).get("ask_walls") or []
+        if bids and asks:
+            bb = float(bids[0].get("price")); ba = float(asks[0].get("price"))
+            mid = (bb + ba) / 2.0
+            if mid > 0 and ba > bb:
+                spread = (ba - bb) / mid
+                depth = (sum(float(w.get("usd") or 0.0) for w in bids)
+                         + sum(float(w.get("usd") or 0.0) for w in asks))
+                return spread, depth, True
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None, False
+
+
+def completed_candle_would_drop(candles, now_epoch, interval_s: int = 300):
+    """B2: is the LATEST 5m bar still forming (opened within the current, unfinished interval)?
+    Such a bar would be dropped under completed-candle enforcement. Pure; measure-first only — the
+    live path does NOT drop it yet. Returns (would_drop, last_bar_ts, age_s)."""
+    try:
+        if not candles:
+            return False, None, None
+        last_ts = int(float(candles[-1][0]))
+        window_start = int(now_epoch // interval_s) * interval_s
+        return (last_ts >= window_start), last_ts, int(now_epoch - last_ts)
+    except Exception:  # noqa: BLE001
+        return False, None, None
+
+
 def _context(sr, equity: float, ts: str, shared: dict | None = None):
     _, _, closes5 = _series(sr.ohlcv)
     if len(closes5) < 30:
@@ -186,6 +221,12 @@ def _context(sr, equity: float, ts: str, shared: dict | None = None):
     if "5m" not in feats:
         return None
     spread, depth_ok = _spread_depth(sr.order_book)
+    # B3 measure-first: compute the REAL spread/depth from the correct bid_walls/ask_walls keys and
+    # LOG it against the fallback the decision path still uses. Not enforced (a later atomic flip).
+    _rs, _rd, _rok = _real_spread_depth(sr.order_book)
+    if _rok:
+        log.info("SPREAD_DEPTH_SHADOW symbol=%s real_spread=%.5f real_depth_usd=%.0f "
+                 "used_spread=%.5f used_depth_ok=%s", sr.symbol, _rs, _rd, spread, depth_ok)
     px = Decimal(str(sr.current_price or feats["5m"].last_price))
     if px <= 0:
         return None
@@ -272,6 +313,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     max_open = int(controls.get("max_open_trades") or config.MAX_OPEN_TRADES)
     peak = max(config.STARTING_EQUITY, equity)
     ts = datetime.now(timezone.utc).isoformat()
+    _now_epoch = datetime.now(timezone.utc).timestamp()   # B2: cycle wall-clock for the completed-candle check
     paper_strats = _REGISTRY.paper()
 
     # (Commit E) The consecutive-loss auto-pause was REMOVED — the bot must not freeze on a
@@ -362,11 +404,24 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     regime_tally: dict[str, int] = {}
     produced_by: dict[str, int] = {}
     shadow_tally = {"c7_shorts": 0, "c10_sweeps": 0, "c10_shadow": 0}
+    _b2_forming = 0   # B2 measure-first: symbols whose latest 5m bar is still forming (would drop)
+    _b2_total = 0
     _capture_rows: list = []   # OHLCV backtest capture (write-only; flushed once post-loop)
     # getattr, not db.X: a db WITHOUT the capture API (e.g. a test double, or a partial
     # module) safely disables capture rather than raising in the cycle. Fail-closed.
     _capture_on = bool(getattr(db, "OHLCV_CAPTURE_ENABLED", False))
     for sr in scan_results:
+        # B2 measure-first: is the latest 5m bar still forming (would be dropped under completed-
+        # candle enforcement)? Log-only — the bar is NOT dropped here (enforcement is a later flip).
+        try:
+            _wd, _lts, _age = completed_candle_would_drop(sr.ohlcv, _now_epoch)
+            _b2_total += 1
+            if _wd:
+                _b2_forming += 1
+                log.info("COMPLETED_CANDLE_WOULD_DROP symbol=%s last_bar_ts=%s age_s=%s tf=5m",
+                         sr.symbol, _lts, _age)
+        except Exception:  # noqa: BLE001
+            pass
         ctx = _context(sr, equity, ts, shared)
         if ctx is None:
             continue
@@ -592,6 +647,8 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         except Exception as _cap_exc:  # noqa: BLE001 — capture must never affect the cycle
             log.error("OHLCV capture flush failed (cycle unaffected): %s", _cap_exc)
 
+    log.info("COMPLETED_CANDLE_SUMMARY forming=%d/%d (B2 measure-first; bars NOT dropped)",
+             _b2_forming, _b2_total)
     log.info(
         "RAID ENGINE: cycle complete — booked %d (regimes: %s | produced: %s | "
         "shadow: c7_shorts=%d c10_sweeps=%d c10_shadow=%d)",
