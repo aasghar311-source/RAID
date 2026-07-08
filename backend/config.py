@@ -225,11 +225,12 @@ MIN_LATEST_5M_VOL_USD = 250.0
 # promote a strategy to live booking once its shadow traffic is validated. Reversible.
 STRATEGY_SHADOW = {"RAID-C3"}
 # §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
-# (stricter-wins over the tier). C3 RECALIBRATED from the live liquid-universe distribution: breakdown
-# volume ratios there cluster at median 0.53x / max 1.34x (they grind, they don't spike like alts), so
-# the 1.50x mirror-of-C1 was unreachable (0 fires). 1.00x = above-average volume (~2x the median setup
-# bar) — confirms genuine breakdowns, filters the sub-average grind. Derived from data, not a placeholder.
-C3_VOLUME_MULT = 1.00
+# (stricter-wins over the tier). C3 RECALIBRATED from TWO live liquid-universe windows: breakdown
+# volume ratios grind low (median 0.3-0.5x, max 1.34x/0.98x — liquid pairs don't spike on breakdowns
+# like alts), with a clean break at ~0.70x separating the ELEVATED breakdowns (>=0.70x) from the dead
+# grind (<=0.58x). So this is a RELATIVE volume filter (top ~20% of the pair's own breakdown volume),
+# not an expansion confirmation (which doesn't fit liquid shorts). 1.50->1.00->0.70, derived from data.
+C3_VOLUME_MULT = 0.70
 # C7 short sleeve (PAPER). Independent, runtime-checked flag: when True, C7 shorts the bottom-
 # quintile laggard in a TREND_DOWN regime (mirror of C3's short path). OFF => C7 shorts stay
 # shadow-only (no C7 shorts booked; C3 and C7-long unaffected). ON RECORD: enabling this REVERSES a
