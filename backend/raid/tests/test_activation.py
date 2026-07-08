@@ -379,7 +379,7 @@ def test_c3_generates_short_with_correct_geometry():
     ctx.extras["spine_dir"] = "NEUTRAL"
     assert C3ShortTrendBreakdown().generate_candidates(ctx) == []
     ctx.extras["spine_dir"] = "SHORT"
-    ctx.extras["vol_ratio_completed"] = 1.0
+    ctx.extras["vol_ratio_completed"] = 0.5     # below the recalibrated 1.00x floor -> none
     assert C3ShortTrendBreakdown().generate_candidates(ctx) == []
 
 
