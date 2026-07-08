@@ -47,8 +47,9 @@ def test_depth_multiple():
 
 
 def test_zero_and_low_vol_caps():
-    assert T.classify_tier(_m(zero_volume_rate=0.10))[0] != "CORE"           # >3% zero-vol fails CORE
-    t, r = T.classify_tier(_m(low_volume_rate=0.50))                         # >35% low-vol fails all
+    # recalibrated caps: CORE zero<=0.10, OPP (loosest) low<=0.75.
+    assert T.classify_tier(_m(zero_volume_rate=0.15))[0] != "CORE"           # >10% zero-vol fails CORE
+    t, r = T.classify_tier(_m(low_volume_rate=0.80))                         # >75% low-vol fails all tiers
     assert t == "DISABLED" and "LOW_VOLUME_RATE_TOO_HIGH" in r
 
 

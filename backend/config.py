@@ -348,29 +348,39 @@ KRAKEN_MAX_PAIRS      = 0        # Disabled — volatile pairs only
 # public Kraken AssetPairs + Ticker + OHLC scan (132 margin-eligible USD pairs -> 45 above the
 # volume floor -> top 40 by ATR%). Breadth is where the aggression comes from. Fail closed: a
 # symbol absent from KRAKEN_MAX_LEVERAGE is NOT traded. Re-run the selection periodically.
+# ACTIVE UNIVERSE (2026-07-08 full-Kraken rebuild): every USD margin pair that CLEARS an active tier
+# under Appendix-C. Scanned all 132 Kraken USD margin pairs; recalibrated the per-bar consistency caps
+# (tiers.py) from the liquid distribution; absolute floors UNTOUCHED. 29 pairs = 11 CORE / 5 AGG / 13 OPP.
+# Recovered from the alt-scale consistency bug (were wrongly DISABLED): TIA, LINK, AVAX, AAVE, ADA, HYPE,
+# NEAR, ONDO, PEPE, SUI, TAO, TRX, UNI, VVV, XDG, XLM, XMR, XRP, ZEC, HBAR, CC, LTC, ETH, SOL, XBT, AERO.
+# Newly qualified from the full scan: BNBUSD, MONUSD, NIGHTUSD. Dropped as HARD-floor-thin (24h/5m-median/
+# depth): BCH, BONK, CRV, DOT, DYDX, FARTCOIN, FET, INJ, PENGU, POPCAT, PUMP, SPX, TON, USELESS, WLD, XPL
+# (DYDX: 24h $232k < $250k floor — stays out regardless of score). Stablecoins excluded (no edge). The
+# C.8 gate re-classifies every pair each cycle, so a pair that degrades below a tier is rejected live.
 PRIORITY_PAIRS = [
-    "BONKUSD", "POPCATUSD", "VVVUSD", "PEPEUSD", "XPLUSD", "TONUSD", "SPXUSD", "FARTCOINUSD",
-    "USELESSUSD", "WLDUSD", "ADAUSD", "AEROUSD", "TIAUSD", "DYDXUSD", "PENGUUSD", "XLMUSD",
-    "PUMPUSD", "ZECUSD", "CRVUSD", "NEARUSD", "AAVEUSD", "INJUSD", "HYPEUSD", "SUIUSD",
-    "HBARUSD", "XRPUSD", "FETUSD", "LTCUSD", "XMRUSD", "ONDOUSD", "XDGUSD", "SOLUSD",
-    "DOTUSD", "AVAXUSD", "UNIUSD", "TAOUSD", "CCUSD", "BCHUSD", "LINKUSD", "ETHUSD",
-    "TRXUSD", "XBTUSD",   # C.7: TRX clears OPPORTUNISTIC; BTC clears CORE (deepest book) + is the spine sensor
+    # CORE (11) — deepest, most consistent
+    "XBTUSD", "ETHUSD", "SOLUSD", "XRPUSD", "HYPEUSD", "ZECUSD", "ADAUSD", "SUIUSD", "LTCUSD",
+    "XLMUSD", "XMRUSD",
+    # AGGRESSIVE (5)
+    "NEARUSD", "TAOUSD", "LINKUSD", "CCUSD", "VVVUSD",
+    # OPPORTUNISTIC (13) — liquid aggregate, burstier per-bar
+    "XDGUSD", "NIGHTUSD", "UNIUSD", "AVAXUSD", "TRXUSD", "AAVEUSD", "MONUSD", "HBARUSD",
+    "TIAUSD", "ONDOUSD", "AEROUSD", "PEPEUSD", "BNBUSD",
 ]
 
-# Per-pair Kraken max margin leverage (RAW, from public AssetPairs leverage arrays). RAID's
-# effective leverage per trade = min(RAID target 3x after drawdown, this cap). A symbol NOT in
-# this map is NOT margin-eligible -> not traded (fail closed). XLMUSD caps at 2x (still eligible).
+# Per-pair Kraken max margin leverage (raw leverage_buy max from the full AssetPairs scan). RAID's
+# effective leverage = MIN(quality-scored band, tier ceiling, THIS cap). This map == the ACTIVE universe
+# (PRIORITY_PAIRS): a symbol NOT here is not margin-eligible -> not traded (fail closed). Rebuilt 2026-07-08
+# from the full Kraken margin scan. XLMUSD caps at 2x (Kraken); XBTUSD kept at operator 5x (CORE 3x binds).
 KRAKEN_MAX_LEVERAGE = {
-    "BONKUSD": 3, "POPCATUSD": 3, "VVVUSD": 3, "PEPEUSD": 5, "XPLUSD": 3, "TONUSD": 3,
-    "SPXUSD": 3, "FARTCOINUSD": 5, "USELESSUSD": 3, "WLDUSD": 3, "ADAUSD": 10, "AEROUSD": 3,
-    "TIAUSD": 3, "DYDXUSD": 3, "PENGUUSD": 3, "XLMUSD": 2, "PUMPUSD": 3, "ZECUSD": 5,
-    "CRVUSD": 5, "NEARUSD": 3, "AAVEUSD": 5, "INJUSD": 3, "HYPEUSD": 5, "SUIUSD": 10,
-    "HBARUSD": 5, "XRPUSD": 10, "FETUSD": 3, "LTCUSD": 10, "XMRUSD": 5, "ONDOUSD": 3,
-    "XDGUSD": 10, "SOLUSD": 10, "DOTUSD": 5, "AVAXUSD": 10, "UNIUSD": 5, "TAOUSD": 5,
-    "CCUSD": 3, "BCHUSD": 5, "LINKUSD": 10, "ETHUSD": 10,
-    # C.7 additions. XBTUSD=5 (operator). TRXUSD=3 (conservative; TRX is OPPORTUNISTIC so its 1.50
-    # tier cap binds regardless — raise if Kraken's real TRX cap is higher).
-    "TRXUSD": 3, "XBTUSD": 5,
+    # CORE
+    "XBTUSD": 5, "ETHUSD": 10, "SOLUSD": 10, "XRPUSD": 10, "HYPEUSD": 5, "ZECUSD": 5,
+    "ADAUSD": 10, "SUIUSD": 10, "LTCUSD": 10, "XLMUSD": 2, "XMRUSD": 5,
+    # AGGRESSIVE
+    "NEARUSD": 3, "TAOUSD": 5, "LINKUSD": 10, "CCUSD": 3, "VVVUSD": 3,
+    # OPPORTUNISTIC
+    "XDGUSD": 10, "NIGHTUSD": 3, "UNIUSD": 5, "AVAXUSD": 10, "TRXUSD": 3, "AAVEUSD": 5,
+    "MONUSD": 3, "HBARUSD": 5, "TIAUSD": 3, "ONDOUSD": 3, "AEROUSD": 3, "PEPEUSD": 5, "BNBUSD": 5,
 }
 OHLCV_CANDLES         = 300      # candles per pair fetched
 KRAKEN_QUOTES         = ("ZUSD", "USD")

@@ -28,29 +28,35 @@ TIER_RISK_MULT = {"CORE": 1.00, "AGGRESSIVE": 0.70, "OPPORTUNISTIC": 0.50}
 # notional; $800 is the mid. So CORE @10bps needs >= 10 x $800 = $8,000 of executable depth.
 DEPTH_REF_USD = 800.0
 
-# Operator §5-§9 tables, verbatim. min_* => metric >= value; max_* => metric <= value;
-# *_mult => depth USD >= mult * DEPTH_REF_USD.
+# Operator §5-§9 tables. min_* => metric >= value; max_* => metric <= value; *_mult => depth USD >=
+# mult * DEPTH_REF_USD. ABSOLUTE floors (volume/spread/depth/slippage) are VERBATIM. The per-bar
+# CONSISTENCY caps (max_zero_volume_rate / max_low_volume_rate) were RECALIBRATED 2026-07-08 from the
+# liquid universe's real distribution: the old alt-scale values (0.03-0.07 / 0.20-0.35) wrongly DISABLED
+# ~25-30% of pairs that pass EVERY absolute floor, because liquid pairs have many quiet 5m bars by nature
+# (same alt-yardstick bug as C3 volume / post_cost anchor). Across the 31 pairs that clear all absolute
+# floors, zero_vol maxes at 0.38 and low_vol at 0.73 — so OPP (the active boundary) is set just above that
+# (0.40 / 0.75) and CORE/AGG on the gradient. NOT a floor loosening — only the consistency caps moved.
 TIERS = {
     "CORE": {
         "min_dollar_vol_24h": 1_500_000.0, "min_dollar_vol_30d_median": 1_000_000.0,
         "min_dollar_vol_5m_median": 2_500.0, "min_trailing20_vol_usd": 2_000.0,
         "max_spread_pct": 0.0015, "max_slippage_p90": 0.0012,
         "min_depth_10bps_mult": 10.0, "min_depth_25bps_mult": 30.0,
-        "max_zero_volume_rate": 0.03, "max_low_volume_rate": 0.20,
+        "max_zero_volume_rate": 0.10, "max_low_volume_rate": 0.30,   # recalibrated (was 0.03/0.20 alt-scale)
     },
     "AGGRESSIVE": {
         "min_dollar_vol_24h": 500_000.0, "min_dollar_vol_30d_median": 350_000.0,
         "min_dollar_vol_5m_median": 800.0, "min_trailing20_vol_usd": 650.0,
         "max_spread_pct": 0.0022, "max_slippage_p90": 0.0018,
         "min_depth_10bps_mult": 5.0, "min_depth_25bps_mult": 15.0,
-        "max_zero_volume_rate": 0.05, "max_low_volume_rate": 0.30,
+        "max_zero_volume_rate": 0.25, "max_low_volume_rate": 0.55,   # recalibrated (was 0.05/0.30 alt-scale)
     },
     "OPPORTUNISTIC": {
         "min_dollar_vol_24h": 250_000.0, "min_dollar_vol_30d_median": 200_000.0,
         "min_dollar_vol_5m_median": 350.0, "min_trailing20_vol_usd": 300.0,
         "max_spread_pct": 0.0025, "max_slippage_p90": 0.0020,
         "min_depth_10bps_mult": 3.0, "min_depth_25bps_mult": 10.0,
-        "max_zero_volume_rate": 0.07, "max_low_volume_rate": 0.35,
+        "max_zero_volume_rate": 0.40, "max_low_volume_rate": 0.75,   # recalibrated: OPP = abs-liquid boundary (was 0.07/0.35)
     },
 }
 

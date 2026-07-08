@@ -16,10 +16,11 @@ REMOVED = ["SLXUSD", "SYNUSD", "GWEIUSD", "RAVEUSD", "PENDLEUSD", "FILUSD"]
 
 
 def test_removed_pairs_not_in_universe():
-    # The old spot-only / sub-3x removals stay out; universe is the 40 ATR set + TRX + BTC (C.7).
+    # The old spot-only / sub-3x removals stay out. Universe = the 29 ACTIVE tier-clearers from the
+    # 2026-07-08 full-Kraken rebuild (11 CORE / 5 AGG / 13 OPP).
     for s in REMOVED:
         assert s not in config.PRIORITY_PAIRS, s
-    assert len(config.PRIORITY_PAIRS) == 42, len(config.PRIORITY_PAIRS)
+    assert len(config.PRIORITY_PAIRS) == 29, len(config.PRIORITY_PAIRS)
 
 
 def test_removed_pairs_not_margin_eligible_and_fail_closed():
@@ -30,9 +31,9 @@ def test_removed_pairs_not_margin_eligible_and_fail_closed():
 
 
 def test_all_universe_pairs_margin_eligible_and_mapped():
-    # Every priority pair must be in the leverage map and margin-eligible (>=2x). XLMUSD caps
-    # at 2x; the rest >=3x. No spot-only pair may be in the universe. 42 = 40 + TRX + BTC (C.7).
-    assert len(config.KRAKEN_MAX_LEVERAGE) == 42
+    # Every priority pair must be in the leverage map and margin-eligible (>=2x). XLMUSD caps at 2x;
+    # the rest >=3x. The map == the ACTIVE universe (29 pairs, 2026-07-08 rebuild).
+    assert len(config.KRAKEN_MAX_LEVERAGE) == 29
     assert set(config.PRIORITY_PAIRS) == set(config.KRAKEN_MAX_LEVERAGE)
     for s in config.PRIORITY_PAIRS:
         assert is_margin_eligible(s), s
@@ -41,7 +42,7 @@ def test_all_universe_pairs_margin_eligible_and_mapped():
 
 def test_effective_leverage_never_exceeds_kraken_cap():
     assert capped_leverage(3, "SOLUSD") == 3     # cap 10, target 3 -> 3
-    assert capped_leverage(3, "SPXUSD") == 3     # cap 3, target 3 -> 3
+    assert capped_leverage(3, "CCUSD") == 3      # cap 3, target 3 -> 3 (active 3x pair)
     assert capped_leverage(3, "XLMUSD") == 2     # cap 2 < target 3 -> 2 (live 2x pair)
     assert capped_leverage(5, "PEPEUSD") == 5    # cap 5, target 5 -> 5
 
