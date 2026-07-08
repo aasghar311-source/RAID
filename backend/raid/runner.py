@@ -375,7 +375,7 @@ async def _market_state_shadow(scan_results, rankings, db, ts, now_epoch):
     # Skip on a db without the accessor (test double) — this also avoids the sensor network fetch
     # in unit tests; the real db module always exposes persist_market_state.
     if not hasattr(db, "persist_market_state"):
-        return
+        return {}
     try:
         import scanner
         from raid.core import market_state as MS
@@ -444,8 +444,29 @@ async def _market_state_shadow(scan_results, rankings, db, ts, now_epoch):
                 "reference_symbol": ref_sym, "legacy_regime_ref": legacy,
                 "majors_json": json.dumps(majors)[:2000], "votes_json": json.dumps(ms.votes)[:1000],
             })
+
+        # Per-pair reconciled direction — RESOLVES the BTC-reference-vs-alt-breadth contradiction:
+        # each traded pair's OWN fast direction (F2/F3 on its bars), HARD-GATED by the portfolio
+        # state so a RISK_OFF book can NEVER emit a LONG (nor RISK_ON a SHORT). This is the coherent
+        # per-pair read the Stage-D strategies consume. Logged; returned for the strategies.
+        pair_dirs, gated_out = {}, 0
+        for _sym, _sr in by_sym.items():
+            _pb = MS.completed(getattr(_sr, "ohlcv", None) or [], now_epoch)
+            _rdir, _raw, _ = MS.resolve_pair_direction(ms.portfolio, _pb)
+            pair_dirs[_sym] = _rdir.value
+            if _raw in (MS.Direction.LONG, MS.Direction.SHORT) and _rdir == MS.Direction.NEUTRAL:
+                gated_out += 1
+        _dc: dict = {}
+        for _d in pair_dirs.values():
+            _dc[_d] = _dc.get(_d, 0) + 1
+        log.info("SPINE_PAIR_DIR portfolio=%s | resolved LONG=%d SHORT=%d NEUTRAL=%d (of %d) | "
+                 "gated_out=%d (own fast_dir contradicted the portfolio gate) — reconciled per-pair",
+                 ms.portfolio.value, _dc.get("LONG", 0), _dc.get("SHORT", 0), _dc.get("NEUTRAL", 0),
+                 len(pair_dirs), gated_out)
+        return pair_dirs
     except Exception as _ms_exc:  # noqa: BLE001 — shadow spine must never affect the cycle
         log.error("MARKET_STATE_SHADOW failed (skipped): %s", _ms_exc)
+    return {}
 
 
 async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
@@ -550,7 +571,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
 
     # Stage-C market-state spine (SHADOW — measure-only; books nothing, feeds no decision, no sizing/
     # exit change). Logs MARKET_STATE_SHADOW + persists market_state_log alongside the legacy regime.
-    await _market_state_shadow(scan_results, rankings, db, ts, _now_epoch)
+    spine_dirs = await _market_state_shadow(scan_results, rankings, db, ts, _now_epoch)
 
     # C.6 Appendix-C §2 pair-liquidity metrics (SHADOW — measure-only; feeds no gate yet). Computes
     # the 15 metrics per pair completed-candle + USD-quote, logs a universe summary + the completed-

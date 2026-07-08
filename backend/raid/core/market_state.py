@@ -241,3 +241,27 @@ def compute_market_state(majors, breadth, reference_bars_completed, reference_sy
     return MarketState(portfolio=portfolio, fast_direction=fdir, excursion_veto=veto,
                        structure=struct, breadth=breadth, majors=majors,
                        reference_symbol=reference_symbol, votes=votes)
+
+
+def resolve_pair_direction(portfolio, pair_bars_completed):
+    """Per-pair ENTRY direction, HARD-GATED by the portfolio state — resolves the earlier
+    contradiction where a BTC-reference fast_dir (LONG) coexisted with an alt-breadth portfolio
+    (RISK_OFF). Computes the pair's OWN fast direction (F2, veto-neutralised by F3), then gates it so
+    the spine can NEVER emit a LONG on a RISK_OFF book or a SHORT on a RISK_ON book:
+      RISK_ON        -> only LONG passes  (pair LONG -> LONG, else NEUTRAL)
+      RISK_OFF       -> only SHORT passes (pair SHORT -> SHORT, else NEUTRAL)
+      MIXED          -> follow the pair's own direction
+      CRISIS/UNKNOWN -> NEUTRAL (no entries; fail closed)
+    Returns (resolved Direction, raw pair fast_dir, votes). Pure — this is what Stage-D strategies read."""
+    fdir, votes = f2_fast_direction(pair_bars_completed)
+    if fdir in (Direction.LONG, Direction.SHORT) and f3_excursion_veto(pair_bars_completed, fdir):
+        fdir = Direction.NEUTRAL
+    if portfolio == PortfolioState.RISK_ON:
+        resolved = Direction.LONG if fdir == Direction.LONG else Direction.NEUTRAL
+    elif portfolio == PortfolioState.RISK_OFF:
+        resolved = Direction.SHORT if fdir == Direction.SHORT else Direction.NEUTRAL
+    elif portfolio == PortfolioState.MIXED:
+        resolved = fdir if fdir in (Direction.LONG, Direction.SHORT) else Direction.NEUTRAL
+    else:  # CRISIS / UNKNOWN -> fail closed
+        resolved = Direction.NEUTRAL
+    return resolved, fdir, votes

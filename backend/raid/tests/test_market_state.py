@@ -7,7 +7,7 @@ Auto-discovered by raid.tests.run_all.
 from raid.core.market_state import (
     Direction, PortfolioState, Structure, completed, compute_market_state,
     f1_portfolio_risk_state, f2_fast_direction, f3_excursion_veto, f4_market_structure,
-    f5_cross_sectional,
+    f5_cross_sectional, resolve_pair_direction,
 )
 
 
@@ -81,3 +81,21 @@ def test_compute_market_state_veto_neutralises_direction():
     breadth = {"pct_up": 0.7, "median_return": 0.01, "dispersion": 0.02, "n": 40}
     ms = compute_market_state(majors, breadth, bars, "BTCUSD")
     assert ms.excursion_veto is True and ms.fast_direction == Direction.NEUTRAL
+
+
+def test_resolve_pair_direction_gates_by_portfolio():
+    up = _bars([100 + i for i in range(30)])       # clean up-trend -> pair fast_dir LONG
+    down = _bars([200 - i for i in range(30)])     # clean down-trend -> pair fast_dir SHORT
+    # RISK_OFF must NEVER emit LONG on an up pair -> NEUTRAL (the reconciliation)
+    r, raw, _ = resolve_pair_direction(PortfolioState.RISK_OFF, up)
+    assert raw == Direction.LONG and r == Direction.NEUTRAL
+    # RISK_OFF + down pair -> SHORT (coherent)
+    rd, rawd, _ = resolve_pair_direction(PortfolioState.RISK_OFF, down)
+    assert rawd == Direction.SHORT and rd == Direction.SHORT
+    # RISK_ON + up -> LONG; RISK_ON + down -> NEUTRAL (no short on a risk-on book)
+    assert resolve_pair_direction(PortfolioState.RISK_ON, up)[0] == Direction.LONG
+    assert resolve_pair_direction(PortfolioState.RISK_ON, down)[0] == Direction.NEUTRAL
+    # MIXED follows the pair; CRISIS / UNKNOWN -> NEUTRAL (fail closed)
+    assert resolve_pair_direction(PortfolioState.MIXED, up)[0] == Direction.LONG
+    assert resolve_pair_direction(PortfolioState.CRISIS, up)[0] == Direction.NEUTRAL
+    assert resolve_pair_direction(PortfolioState.UNKNOWN, down)[0] == Direction.NEUTRAL
