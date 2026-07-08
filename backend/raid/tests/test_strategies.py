@@ -90,6 +90,15 @@ def test_c1_no_trade_when_extended_or_wrong_spine():
     assert c1.generate_candidates(_ctx(MarketRegime.TREND_UP, feat, spine_dir="LONG", vrc=1.0)) == []
 
 
+def test_c2_pullback_spine_gated():
+    reg = build_default_registry()
+    c2 = reg.get("RAID-C2")
+    feat = _feat(last_price=99.5, ema20=99.0, ema50=98.0, swing_low=97.0)   # pullback to ema20, stacked up
+    assert len(c2.generate_candidates(_ctx(MarketRegime.TREND_UP, feat, spine_dir="LONG", vrc=1.0))) == 1
+    assert c2.generate_candidates(_ctx(MarketRegime.TREND_UP, feat, spine_dir="SHORT", vrc=1.0)) == []   # not LONG
+    assert c2.generate_candidates(_ctx(MarketRegime.TREND_UP, feat, spine_dir="LONG", vrc=0.3)) == []    # dead-vol dip
+
+
 def test_c4_range_reversion_emits_candidate():
     reg = build_default_registry()
     c4 = reg.get("RAID-C4")

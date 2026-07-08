@@ -107,13 +107,22 @@ class C2LongTrendPullback(Strategy):
     strategy_id = "RAID-C2"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.TREND_UP})
+    eligible_regimes = frozenset()   # Stage-D: gated by the reconciled SPINE, not the legacy regime
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
+        # Stage-D: direction from the reconciled per-pair spine — buy pullbacks ONLY when the pair
+        # resolves LONG (portfolio RISK_ON/MIXED + up-structure). Never a long on a RISK_OFF book.
+        if ctx.extras.get("spine_dir") != "LONG":
+            return []
         f = ctx.feature(_PRIMARY_TF)
         if f is None or f.ema20 is None or f.ema50 is None or f.swing_low is None:
             return []
         if not (f.ema20 > f.ema50):
+            return []
+        # §10 pullback MINIMUM (completed-bar) — a pullback is a dip, so this only rejects DEAD-volume
+        # pullbacks, it does NOT require expansion (that would filter healthy dips). Low floor by design.
+        vrc = ctx.extras.get("vol_ratio_completed")
+        if vrc is None or vrc < config.C2_VOLUME_MULT:
             return []
         px = f.last_price
         ema20 = f.ema20

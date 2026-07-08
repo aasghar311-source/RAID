@@ -223,7 +223,7 @@ MIN_LATEST_5M_VOL_USD = 250.0
 # Stage-D strategy rebuild: strategies in this set are in the SHADOW state — they generate + LOG
 # candidates (STRATEGY_SHADOW) but book NOTHING (Appendix-B initial states). Remove from the set to
 # promote a strategy to live booking once its shadow traffic is validated. Reversible.
-STRATEGY_SHADOW = {"RAID-C1", "RAID-C3"}
+STRATEGY_SHADOW = {"RAID-C1", "RAID-C2", "RAID-C3"}
 # §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
 # (stricter-wins over the tier). C3 RECALIBRATED from TWO live liquid-universe windows: breakdown
 # volume ratios grind low (median 0.3-0.5x, max 1.34x/0.98x — liquid pairs don't spike on breakdowns
@@ -235,6 +235,10 @@ C3_VOLUME_MULT = 0.70
 # eligible p75~1.11, p90~2.10, reaches 1.5x) so the operator's §10 1.50x is appropriate + reachable;
 # deliberately NOT mirrored to C3's 0.70x (short breakdowns grind, don't spike). Per-direction §10.
 C1_VOLUME_MULT = 1.50
+# C2 long pullback: a pullback to ema20 is a DIP, not a breakout — it must NOT require volume
+# EXPANSION (that would filter healthy pullbacks). §10 here is a low MINIMUM that only rejects dead-
+# volume dips (vr@LONG p50~0.45); set from the harness distribution, confirm before/after.
+C2_VOLUME_MULT = 0.50
 # C7 short sleeve (PAPER). Independent, runtime-checked flag: when True, C7 shorts the bottom-
 # quintile laggard in a TREND_DOWN regime (mirror of C3's short path). OFF => C7 shorts stay
 # shadow-only (no C7 shorts booked; C3 and C7-long unaffected). ON RECORD: enabling this REVERSES a
