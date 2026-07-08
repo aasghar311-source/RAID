@@ -199,13 +199,13 @@ MAX_TP_DISTANCE_PCT = 0.025   # 2.5% max TP distance — was avg 4.62%, 0/314 hi
 ATR_STOP_MULT      = 1.5
 ATR_STOP_MIN       = 0.006    # 0.6% floor
 ATR_STOP_MAX       = 0.040    # 4.0% ceiling
-# Entry data-quality gate (FAIL-CLOSED): reject any candidate whose latest 5m bar has NO traded
-# volume — a zero-volume bar has no real market and any fill on it is fiction. Enforced once in
-# helpers.build_candidate (the single candidate-construction chokepoint) via features.volume_ratio,
-# which is None on missing/insufficient bars and 0.0 when the latest bar volume is 0. Default 0.0
-# blocks ONLY zero/missing (a genuine small positive ratio passes); raise later to test a thin-
-# volume threshold without another refactor. HARD-ZERO ONLY — not a thin filter.
-MIN_VOLUME_RATIO   = 0.0
+# Entry data-quality + universal thin-volume gate (FAIL-CLOSED): reject any candidate whose latest
+# 5m volume_ratio is missing/None (insufficient bars) or <= MIN_VOLUME_RATIO. Enforced once in
+# helpers.build_candidate (the single candidate-construction chokepoint) via features.volume_ratio
+# (None on missing/insufficient, 0.0 on a zero-volume latest bar). A.2: raised 0.0 -> 0.35, the
+# Appendix-C §3 universal hard minimum (a 5m bar below 0.35x its ~20-bar average volume is too thin
+# to fill economically). Subsumes the old hard-zero gate (0.0 <= 0.35). Reversible (0.0 = hard-zero).
+MIN_VOLUME_RATIO   = 0.35
 # C7 short sleeve (PAPER). Independent, runtime-checked flag: when True, C7 shorts the bottom-
 # quintile laggard in a TREND_DOWN regime (mirror of C3's short path). OFF => C7 shorts stay
 # shadow-only (no C7 shorts booked; C3 and C7-long unaffected). ON RECORD: enabling this REVERSES a

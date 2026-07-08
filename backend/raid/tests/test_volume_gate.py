@@ -7,6 +7,7 @@ missing/zero while keeping its 1.5x threshold for positive-volume bars. Plain as
 
 from decimal import Decimal
 
+import config
 from raid.core.candidate import Direction, EntryType, MarketRegime
 from raid.core.features import FeatureSnapshot
 from raid.core.provider import CAP_SPOT_LONG
@@ -76,15 +77,20 @@ def test_gate_rejects_missing_and_insufficient():
     assert _build(_ctx(candles=_candles(n=10))) is None  # <21 bars -> volume_ratio None
 
 
-# (c) genuine small positive ratio (0.1) STILL passes the shared gate (no thin filter added)
-def test_gate_passes_small_positive_ratio():
-    assert _build(_ctx(candles=_candles(latest_vol=10.0, prior_vol=100.0))) is not None   # ratio 0.1
+# (c) A.2 universal thin-volume floor (0.35): ratio below the floor is REJECTED; at/above passes
+def test_thin_volume_floor():
+    assert config.MIN_VOLUME_RATIO == 0.35                                                  # A.2 flip live
+    assert _build(_ctx(candles=_candles(latest_vol=10.0, prior_vol=100.0))) is None         # ratio 0.10 < 0.35
+    assert _build(_ctx(candles=_candles(latest_vol=30.0, prior_vol=100.0))) is None         # ratio 0.30 < 0.35
+    assert _build(_ctx(candles=_candles(latest_vol=50.0, prior_vol=100.0))) is not None     # ratio 0.50 >= 0.35
     reg = build_default_registry()
     c4 = reg.get("RAID-C4")   # no 1.5x threshold of its own -> exercises ONLY the shared gate
     f4 = _feat(last_price=95.4, swing_low=95.0, swing_high=104.0, rsi14=38.0)
-    cands = c4.generate_candidates(_ctx(candles=_candles(latest_vol=10.0, prior_vol=100.0),
+    assert c4.generate_candidates(_ctx(candles=_candles(latest_vol=10.0, prior_vol=100.0),
+                                       regime=MarketRegime.RANGE, feat=f4)) == []            # 0.10 rejected
+    cands = c4.generate_candidates(_ctx(candles=_candles(latest_vol=50.0, prior_vol=100.0),
                                         regime=MarketRegime.RANGE, feat=f4))
-    assert len(cands) == 1
+    assert len(cands) == 1                                                                   # 0.50 passes
 
 
 # regression: normal positive volume still emits (long/positive path unchanged)
