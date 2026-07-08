@@ -183,31 +183,34 @@ async def fetch_funding_rates() -> tuple:
 
 
 async def _fetch_order_book(client, pair: str) -> dict:
-    """Fetch top 3 bid/ask walls from Kraken order book (reuses existing httpx client).
-    Returns {"bid_walls": [{"price": X, "usd": Y}], "ask_walls": [...]} sorted by USD volume.
+    """Fetch the Kraken order book (100 levels/side) and return BOTH the top-3 USD walls (C10 sweep
+    detection, unchanged) AND the full level ladders (C.7 depth/spread/slippage measurement over the
+    real executable book, not just 3 walls). Shape:
+        {"bid_walls":[top3], "ask_walls":[top3], "bid_levels":[all {price,usd}], "ask_levels":[all]}
     Returns {} on error — never raises."""
     try:
         res = await client.get(
-            f"{KRAKEN_BASE}/Depth", params={"pair": pair, "count": 25}
+            f"{KRAKEN_BASE}/Depth", params={"pair": pair, "count": 100}
         )
         data = res.json().get("result", {})
         for _, book in data.items():
-            bid_walls, ask_walls = [], []
+            bid_levels, ask_levels = [], []
             for e in book.get("bids", []):
                 try:
                     p, v = float(e[0]), float(e[1])
-                    bid_walls.append({"price": round(p, 6), "usd": round(p * v, 2)})
+                    bid_levels.append({"price": round(p, 6), "usd": round(p * v, 2)})
                 except (IndexError, TypeError, ValueError):
                     continue
             for e in book.get("asks", []):
                 try:
                     p, v = float(e[0]), float(e[1])
-                    ask_walls.append({"price": round(p, 6), "usd": round(p * v, 2)})
+                    ask_levels.append({"price": round(p, 6), "usd": round(p * v, 2)})
                 except (IndexError, TypeError, ValueError):
                     continue
-            bid_walls.sort(key=lambda w: w["usd"], reverse=True)
-            ask_walls.sort(key=lambda w: w["usd"], reverse=True)
-            return {"bid_walls": bid_walls[:3], "ask_walls": ask_walls[:3]}
+            bid_walls = sorted(bid_levels, key=lambda w: w["usd"], reverse=True)[:3]
+            ask_walls = sorted(ask_levels, key=lambda w: w["usd"], reverse=True)[:3]
+            return {"bid_walls": bid_walls, "ask_walls": ask_walls,
+                    "bid_levels": bid_levels, "ask_levels": ask_levels}
     except Exception as exc:  # noqa: BLE001
         log.error("_fetch_order_book failed for %s: %s", pair, exc)
     return {}

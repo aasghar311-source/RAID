@@ -343,18 +343,21 @@ async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
         if written:
             log.info("PAIR_LIQUIDITY_SHADOW persisted rows=%d", written)
 
-        # C.7 tier classification (SHADOW — log-only; no persistence, no gating). Each pair earns the
-        # best tier its real §2 metrics support; logs the CORE/AGGRESSIVE/OPPORTUNISTIC/SHADOW/DISABLED
-        # distribution so the universe spread is visible before C.8 enforces anything.
+        # C.7 tier classification (SHADOW — log-only; no gating). classify_pair applies the exact
+        # §5-9 thresholds + the §9 leverage-unknown DISABLE + the tradeable leverage (stricter of the
+        # §17 tier cap and the Kraken per-pair cap). Logs the distribution + active-tier leverage.
         dist = {t: [] for t in tiers.TIER_ORDER}
         for r in rows:
-            tier, _ = tiers.classify_tier(r)
-            dist[tier].append(r["symbol"])
-        log.info("PAIR_TIER_SHADOW CORE=%d%s AGGRESSIVE=%d%s OPPORTUNISTIC=%d SHADOW=%d DISABLED=%d "
-                 "(of %d) — measure-only (no gating)",
-                 len(dist["CORE"]), (":" + ",".join(dist["CORE"][:8]) if dist["CORE"] else ""),
-                 len(dist["AGGRESSIVE"]), (":" + ",".join(dist["AGGRESSIVE"][:8]) if dist["AGGRESSIVE"] else ""),
-                 len(dist["OPPORTUNISTIC"]), len(dist["SHADOW"]), len(dist["DISABLED"]), len(rows))
+            tier, _reasons, lev = tiers.classify_pair(r, kraken_max_leverage(r["symbol"]))
+            dist[tier].append((r["symbol"], lev))
+
+        def _members(t):
+            return ",".join("%s@%s" % (s, ("%.2fx" % lv if lv else "?")) for s, lv in dist[t][:10])
+
+        log.info("PAIR_TIER_SHADOW CORE=%d[%s] AGGRESSIVE=%d[%s] OPPORTUNISTIC=%d[%s] DISABLED=%d "
+                 "(of %d) — measure-only (depth=full-book)",
+                 len(dist["CORE"]), _members("CORE"), len(dist["AGGRESSIVE"]), _members("AGGRESSIVE"),
+                 len(dist["OPPORTUNISTIC"]), _members("OPPORTUNISTIC"), len(dist["DISABLED"]), len(rows))
     except Exception as exc:  # noqa: BLE001 — shadow metrics must never affect the cycle
         log.error("PAIR_LIQUIDITY_SHADOW failed (skipped): %s", exc)
 

@@ -49,6 +49,20 @@ def test_dollar_vol_30d_median():
     assert L.dollar_vol_30d_median(None) is None
 
 
+def test_trailing20():
+    b = _c5(n=25, vol=100.0)                                        # each bar 100*100 = 10000 USD
+    assert abs(L.trailing20_vol_usd(b) - 10000.0) < 1e-6           # mean of last 20
+    assert L.trailing20_vol_usd(_c5(n=10)) is None                 # < 20 bars -> None
+
+
+def test_depth_uses_full_book_levels():
+    # 5 levels/side all within 10bps of mid 100; walls-only would see just the top-3.
+    book = {"bid_levels": [{"price": 99.99 - i * 0.001, "usd": 1000.0} for i in range(5)],
+            "ask_levels": [{"price": 100.01 + i * 0.001, "usd": 1000.0} for i in range(5)],
+            "bid_walls": [{"price": 99.99, "usd": 1000.0}], "ask_walls": [{"price": 100.01, "usd": 1000.0}]}
+    assert L.depth_within_bps(book, 25) == 10000.0                 # full book (10x1000), not walls (2000)
+
+
 # ---- liquidity (5) ----
 def test_spread_depth_slippage():
     bk = _book()
@@ -87,9 +101,10 @@ def test_compute_pair_liquidity_shape():
                                  price=100.0, now_epoch=None, atr_pct=0.02, volume_24h_usd=1_000_000.0,
                                  ohlcv_1d=daily)
     for k in ("symbol", "dollar_vol_24h", "dollar_vol_30d_median", "dollar_vol_5m_median",
-              "latest_5m_vol_usd", "volume_ratio", "zero_volume_rate", "low_volume_rate", "spread_pct",
-              "depth_10bps_usd", "depth_25bps_usd", "slippage_p50", "slippage_p90", "dynamic_cost_pct",
-              "target_cost_multiple", "net_rr", "volume_ratio_forming", "completed_bars"):
+              "trailing20_vol_usd", "latest_5m_vol_usd", "volume_ratio", "zero_volume_rate",
+              "low_volume_rate", "spread_pct", "depth_10bps_usd", "depth_25bps_usd", "slippage_p50",
+              "slippage_p90", "dynamic_cost_pct", "target_cost_multiple", "net_rr",
+              "volume_ratio_forming", "completed_bars"):
         assert k in m
     assert m["dollar_vol_30d_median"] is not None                 # available once daily is supplied
     assert m["dollar_vol_24h"] == 1_000_000.0

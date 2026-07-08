@@ -74,6 +74,13 @@ def dollar_vol_30d_median(completed_1d, days: int = 30):
     return median(xs) if xs else None
 
 
+def trailing20_vol_usd(completed_5m, window: int = 20):
+    """Mean USD-quote volume over the last `window` COMPLETED 5m bars (§5-9 trailing20). None if
+    fewer than `window` bars (fail-closed)."""
+    xs = [v for v in (_usd_vol(b) for b in completed_5m[-window:]) if v is not None]
+    return (sum(xs) / len(xs)) if len(xs) >= window else None
+
+
 def latest_5m_vol_usd(completed_5m):
     return _usd_vol(completed_5m[-1]) if completed_5m else None
 
@@ -113,9 +120,15 @@ def low_volume_rate(completed_5m, floor: float = LOW_VOLUME_FLOOR, window: int =
 
 
 # ---- LIQUIDITY (5) ----
+def _levels(order_book, side):
+    """Executable levels for a side ('bid'/'ask'): prefer the FULL '<side>_levels' (all fetched book
+    levels within the sampled window), fall back to '<side>_walls' (top-3) for backward compat."""
+    return order_book.get(side + "_levels") or order_book.get(side + "_walls") or []
+
+
 def _best_bid_ask(order_book):
-    bids = order_book.get("bid_walls") or []
-    asks = order_book.get("ask_walls") or []
+    bids = _levels(order_book, "bid")
+    asks = _levels(order_book, "ask")
     if not bids or not asks:
         return None, None
     try:
@@ -136,8 +149,8 @@ def spread_pct(order_book):
 
 
 def depth_within_bps(order_book, bps):
-    """USD depth on BOTH sides within +/- bps of mid (top-3 walls only => conservative lower bound).
-    None if the book is empty/crossed."""
+    """USD depth on BOTH sides within +/- bps of mid, summed over the FULL executable book (all
+    sampled levels, not just the top-3 walls). None if the book is empty/crossed."""
     bb, ba = _best_bid_ask(order_book)
     if bb is None or ba is None or ba <= bb:
         return None
@@ -145,23 +158,23 @@ def depth_within_bps(order_book, bps):
     if mid <= 0:
         return None
     lo, hi = mid * (1 - bps * BPS), mid * (1 + bps * BPS)
-    bids = order_book.get("bid_walls") or []
-    asks = order_book.get("ask_walls") or []
+    bids = _levels(order_book, "bid")
+    asks = _levels(order_book, "ask")
     usd = sum(b["usd"] for b in bids if b.get("price", 0) >= lo)
     usd += sum(a["usd"] for a in asks if a.get("price", 0) <= hi)
     return usd
 
 
 def slippage_estimate(order_book, size_usd):
-    """Fraction VWAP slippage vs mid to BUY `size_usd` by walking the ask walls. None if the top-3
-    ask walls can't cover the order (insufficient visible depth -> fail-closed)."""
+    """Fraction VWAP slippage vs mid to BUY `size_usd` by walking the ask book (all sampled levels).
+    None if the visible book can't cover the order (insufficient depth -> fail-closed)."""
     bb, ba = _best_bid_ask(order_book)
     if bb is None or ba is None or ba <= bb:
         return None
     mid = (bb + ba) / 2
     if mid <= 0:
         return None
-    asks = sorted((order_book.get("ask_walls") or []), key=lambda w: w.get("price", 0))
+    asks = sorted(_levels(order_book, "ask"), key=lambda w: w.get("price", 0))
     remaining, base_filled, quote_spent = size_usd, 0.0, 0.0
     for a in asks:
         price = a.get("price", 0)
@@ -232,6 +245,7 @@ def compute_pair_liquidity(symbol, ohlcv_5m, order_book, price, now_epoch, atr_p
         "dollar_vol_24h": float(volume_24h_usd) if volume_24h_usd is not None else None,
         "dollar_vol_30d_median": dollar_vol_30d_median(completed_1d),
         "dollar_vol_5m_median": dollar_vol_5m_median(completed),
+        "trailing20_vol_usd": trailing20_vol_usd(completed),
         "latest_5m_vol_usd": latest_5m_vol_usd(completed),
         "volume_ratio": volume_ratio(completed),  # §2: COMPLETED-candle
         "zero_volume_rate": zero_volume_rate(completed),
