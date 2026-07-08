@@ -71,3 +71,23 @@ def test_wider_legal_spread_costs_more():
     wide = _build(_ctx(config.MAX_SPREAD_PCT_UNIVERSAL - 1e-5))          # 0.249%, still under cap
     assert tight is not None and wide is not None
     assert float(wide.net_rr) < float(tight.net_rr)          # wider real spread -> lower net_rr
+
+
+def test_real_spread_uses_top_of_book_not_biggest_walls():
+    # A.1 FIX regression: the runtime spread must be true top-of-book (best_bid/best_ask over the FULL
+    # levels, matching the tier classifier), NOT the gap between the two LARGEST *size-sorted* walls.
+    # This book has a TIGHT top-of-book (99.99/100.01 -> ~0.02%) but its biggest walls sit DEEP
+    # (99.00/101.00 -> ~2%). The old code returned ~2% and would reject the pair; the fix returns ~0.02%.
+    from raid.runner import _real_spread_depth
+    ob = {
+        "bid_levels": [{"price": 99.99, "usd": 500.0}, {"price": 99.00, "usd": 50000.0}],
+        "ask_levels": [{"price": 100.01, "usd": 500.0}, {"price": 101.00, "usd": 50000.0}],
+        "bid_walls": [{"price": 99.00, "usd": 50000.0}, {"price": 99.99, "usd": 500.0}],
+        "ask_walls": [{"price": 101.00, "usd": 50000.0}, {"price": 100.01, "usd": 500.0}],
+    }
+    sp, depth, ok = _real_spread_depth(ob)
+    assert ok is True
+    assert sp is not None and sp < 0.001          # ~0.02% top-of-book, NOT the ~2% biggest-wall gap
+    assert depth > 0                              # executable depth still summed
+    # crossed / empty book -> fail-closed (unknown spread)
+    assert _real_spread_depth({}) == (None, None, False)

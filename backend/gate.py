@@ -104,10 +104,15 @@ async def check_gate(signal: Signal, db, *, strategy=None, cycle_ts=None):
         try:
             log.warning(
                 "GATE_PASSED_ON_SWALLOW symbol=%s market=%s strategy=%s direction=%s cycle_ts=%s "
-                "checks=%s — under fail-closed this entry would REJECT",
+                "checks=%s — fail_closed=%s",
                 getattr(signal, "symbol", "?"), getattr(signal, "market", "?"), strategy or "?",
                 getattr(signal, "direction", "?"), cycle_ts or "?", ",".join(_swallowed),
+                config.ENFORCE_GATE_FAIL_CLOSED,
             )
         except Exception:  # noqa: BLE001
             pass
+        # B.3 (ENFORCE): a check whose exception was swallowed cannot be trusted — REJECT rather than
+        # book past an unverified safety check (kill-switch / daily-loss / deployment / max-open).
+        if config.ENFORCE_GATE_FAIL_CLOSED:
+            return GateResult(False, "gate_failclosed_on_swallow")
     return GateResult(True, "all_checks_passed")

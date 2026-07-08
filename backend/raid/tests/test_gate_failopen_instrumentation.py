@@ -1,14 +1,16 @@
-"""B0.5 — measure-first instrumentation of gate.check_gate's swallowed exceptions.
+"""B0.5 instrumentation + B.3 fail-closed enforcement of gate.check_gate's swallowed exceptions.
 
 Proves the instrumentation (a) logs GATE_FAILOPEN + GATE_PASSED_ON_SWALLOW when a check's
-exception is swallowed, (b) does NOT change behavior (the gate still passes / rejects exactly
-as before), and (c) stays silent when nothing is swallowed. No network, no DB, no enforcement
-flip. Auto-discovered by raid.tests.run_all.
+exception is swallowed (in BOTH modes), (b) behavior is flag-gated: with ENFORCE_GATE_FAIL_CLOSED
+False the gate still passes on a swallow (B0.5 measure-first), with it True the same swallow
+REJECTS (B.3 fail-closed), and (c) stays silent when nothing is swallowed. No network, no DB.
+Auto-discovered by raid.tests.run_all.
 """
 
 import asyncio
 import logging
 
+import config
 import gate
 
 
@@ -73,14 +75,24 @@ def _run_with_capture(db, strategy=None, cycle_ts=None):
     return result, cap.msgs
 
 
-def test_swallowed_exception_is_instrumented_and_behavior_unchanged():
-    result, msgs = _run_with_capture(_DB(raise_on={"kill"}))
-    # behavior UNCHANGED — a swallowed kill-switch error still lets the gate pass
-    assert result.passed is True and result.reason == "all_checks_passed"
-    # instrumentation fired
-    assert any("GATE_FAILOPEN" in m and "check=kill_switch" in m and "would_reject_failclosed=1" in m
-               for m in msgs), msgs
-    assert any("GATE_PASSED_ON_SWALLOW" in m and "kill_switch" in m for m in msgs), msgs
+def test_swallowed_exception_instrumented_and_flag_gated_behavior():
+    _prev = config.ENFORCE_GATE_FAIL_CLOSED
+    try:
+        # fail-OPEN (flag off, B0.5): a swallowed kill-switch error still lets the gate pass.
+        config.ENFORCE_GATE_FAIL_CLOSED = False
+        result, msgs = _run_with_capture(_DB(raise_on={"kill"}))
+        assert result.passed is True and result.reason == "all_checks_passed"
+        assert any("GATE_FAILOPEN" in m and "check=kill_switch" in m and "would_reject_failclosed=1" in m
+                   for m in msgs), msgs
+        assert any("GATE_PASSED_ON_SWALLOW" in m and "kill_switch" in m for m in msgs), msgs
+        # fail-CLOSED (flag on, B.3): the SAME swallow now REJECTS; instrumentation still fires.
+        config.ENFORCE_GATE_FAIL_CLOSED = True
+        result2, msgs2 = _run_with_capture(_DB(raise_on={"kill"}))
+        assert result2.passed is False and result2.reason == "gate_failclosed_on_swallow"
+        assert any("GATE_FAILOPEN" in m and "check=kill_switch" in m for m in msgs2), msgs2
+        assert any("GATE_PASSED_ON_SWALLOW" in m and "kill_switch" in m for m in msgs2), msgs2
+    finally:
+        config.ENFORCE_GATE_FAIL_CLOSED = _prev
 
 
 def test_clean_gate_emits_no_instrumentation():
@@ -97,11 +109,11 @@ def test_legit_reject_unaffected_and_no_swallow_log():
 
 
 def test_gate_lines_carry_strategy_and_cycle_ts():
-    # (B0.5 traceability amendment) a swallow-tagged line carries strategy + cycle_ts so it ties to
-    # its candidate/cycle and can correlate forward to a trade after booking (no trade_id pre-booking).
-    result, msgs = _run_with_capture(_DB(raise_on={"kill"}),
-                                     strategy="RAID-C1", cycle_ts="2026-07-07T00:00:00Z")
-    assert result.passed is True
+    # (B0.5 traceability) a swallow-tagged line carries strategy + cycle_ts so it ties to its
+    # candidate/cycle and can correlate forward to a trade after booking (no trade_id pre-booking).
+    # Traceability holds regardless of the fail-closed flag (asserts the LOG lines, not the result).
+    _, msgs = _run_with_capture(_DB(raise_on={"kill"}),
+                                strategy="RAID-C1", cycle_ts="2026-07-07T00:00:00Z")
     assert any("GATE_FAILOPEN" in m and "strategy=RAID-C1" in m and "cycle_ts=2026-07-07T00:00:00Z" in m
                for m in msgs), msgs
     assert any("GATE_PASSED_ON_SWALLOW" in m and "strategy=RAID-C1" in m

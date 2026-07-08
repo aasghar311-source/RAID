@@ -82,10 +82,10 @@ WORKER_ID              = os.getenv("RAILWAY_REPLICA_ID") or os.getenv("HOSTNAME"
 # opportunities. NOTE: operator_controls.brain_cycle_minutes OVERRIDES this at runtime;
 # the worker syncs the DB to this value at startup (see worker.main).
 BRAIN_CYCLE_MINUTES    = 5
-MAX_OPEN_TRADES        = 60
-# (Commit D) breadth: allow opening across many DIFFERENT symbols in one cycle (per-symbol
-# dedupe keeps it to one candidate per symbol, so this ~= max distinct symbols opened/cycle).
-# The real bound is the 95% MARGIN deployment cap, not this number.
+MAX_OPEN_TRADES        = 5
+# Appendix-C hard cap: at most 5 concurrent open positions ($4,000 account, per-trade risk ~0.5-0.9%,
+# up to 3x). This is a REAL bound enforced in gate.check_gate (CHECK 4) — it binds INDEPENDENTLY of the
+# 95% margin deployment cap; do NOT assume the risk/deployment caps bind first. Was 60 (breadth-era).
 MAX_ENTRIES_PER_CYCLE  = 40
 CLAUDE_DAILY_BUDGET_USD = 7.0
 CLAUDE_MODEL           = "claude-haiku-4-5-20251001"
@@ -223,7 +223,23 @@ MIN_LATEST_5M_VOL_USD = 250.0
 # Stage-D strategy rebuild: strategies in this set are in the SHADOW state — they generate + LOG
 # candidates (STRATEGY_SHADOW) but book NOTHING (Appendix-B initial states). Remove from the set to
 # promote a strategy to live booking once its shadow traffic is validated. Reversible.
-STRATEGY_SHADOW = {"RAID-C1", "RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10"}
+# GO-LIVE (enforcement boundary): the WORKING SET C1/C2/C3 (trend-following, harness-confirmed
+# coherent) is promoted to live-paper. C4/C5 (structurally benched), C6/C7 (cross-sectionally
+# thin), and C10 (data-gated on order book) stay SHADOW. C8/C9 are 0-candidate stubs (data-gated /
+# disabled). To roll back the go-live, re-add "RAID-C1","RAID-C2","RAID-C3" to this set.
+STRATEGY_SHADOW = {"RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10"}
+# C.8 (ENFORCE): tier gating BINDS in the booking loop. When True, a candidate whose pair is not in
+# an active tier (DISABLED, or tier_gate REJECT on the universal/tier spread cap) is rejected, and a
+# booked candidate is capped at the pair's tier leverage (min tier/Kraken) and sized by the tier risk
+# multiplier. False = the old C8_SHADOW_GATE (log-only, no live effect). Reversible.
+ENFORCE_TIER_GATE = True
+# B.3 (ENFORCE): the risk gate fails CLOSED. When True, if any of the five gate checks swallowed an
+# exception (GATE_PASSED_ON_SWALLOW), check_gate REJECTS the candidate instead of passing on the
+# swallow. Safe direction (miss a trade vs book past a broken kill-switch/daily-loss check). NOTE:
+# this could not be window-validated pre-go-live — with the whole strategy layer in SHADOW the gate
+# is never exercised, so GATE_PASSED_ON_SWALLOW=0 is untested-not-clean. Flipped on the safe-direction
+# argument. Set False to go live fail-open+instrumented and flip after a real booking window. Reversible.
+ENFORCE_GATE_FAIL_CLOSED = True
 # §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
 # (stricter-wins over the tier). C3 RECALIBRATED from TWO live liquid-universe windows: breakdown
 # volume ratios grind low (median 0.3-0.5x, max 1.34x/0.98x — liquid pairs don't spike on breakdowns

@@ -700,10 +700,26 @@ async def main():
 
     if config.USE_NEW_ENGINE:
         from raid import runner as raid_runner
+        from raid.strategies.catalog import build_default_registry
+        from raid.strategies.shadow import _ShadowStrategy
         _held = await raid_runner._hold_lease(db)
+        # Resolve each REGISTERED strategy's actual posture so the boot line can never drift from
+        # config: DISABLED = data-gated stub (declines), SHADOW = in STRATEGY_SHADOW (books nothing),
+        # LIVE = everything else (books paper).
+        _live, _shadow, _disabled = [], [], []
+        for _s in sorted(build_default_registry().all(), key=lambda x: x.strategy_id):
+            if isinstance(_s, _ShadowStrategy):
+                _disabled.append(_s.strategy_id)
+            elif _s.strategy_id in config.STRATEGY_SHADOW:
+                _shadow.append(_s.strategy_id)
+            else:
+                _live.append(_s.strategy_id)
         log.info(
-            "RAID ENGINE ONLINE — worker=%s lease=%s — 10 strategies registered (all paper; C8/C9 data-gated stubs)",
-            config.WORKER_ID, "ACQUIRED" if _held else "PASSIVE",
+            "RAID ENGINE ONLINE — worker=%s lease=%s — go-live resolved: LIVE=%s SHADOW=%s DISABLED=%s "
+            "| tier_gate=%s fail_closed_gate=%s real_spread=%s max_open=%d",
+            config.WORKER_ID, "ACQUIRED" if _held else "PASSIVE", _live, _shadow, _disabled,
+            config.ENFORCE_TIER_GATE, config.ENFORCE_GATE_FAIL_CLOSED,
+            config.ENFORCE_REAL_SPREAD_DEPTH, config.MAX_OPEN_TRADES,
         )
     else:
         log.info("LEGACY ENGINE ONLINE — brain path active (USE_NEW_ENGINE=False)")

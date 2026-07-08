@@ -183,21 +183,22 @@ def _spread_depth(order_book):
 
 
 def _real_spread_depth(order_book):
-    """B3: REAL spread + total executable depth (USD) from the scanner's ACTUAL bid_walls/ask_walls
-    shape. The live decision path still uses _spread_depth (which reads the wrong 'bids'/'asks' keys
-    and always returns the 0.0004 fallback); this is the measure-first fix — computed and LOGGED,
-    not yet fed into decisions. Returns (spread_pct, depth_usd, ok)."""
+    """B3/A.1: REAL top-of-book spread + total executable depth (USD). The spread is the true
+    top-of-book (best_bid/best_ask over the FULL sampled levels, via liquidity.spread_pct — the SAME
+    computation the C.7 tier classifier uses), so A.1 (runtime gate), C.8 (tier gate), and the tier
+    classifier all price on ONE consistent spread. FIX: previously measured the gap between the two
+    LARGEST *size-sorted* walls (bid_walls[0]/ask_walls[0]) — a phantom 3-70x-wide "spread" that
+    is NOT the executable top-of-book (e.g. BTC 0.175% vs true ~0.05%). Same top-3-walls class of bug
+    already corrected in the depth path. Returns (spread_pct, depth_usd, ok)."""
     try:
+        sp = liquidity.spread_pct(order_book)
+        if sp is None:
+            return None, None, False
         bids = (order_book or {}).get("bid_walls") or []
         asks = (order_book or {}).get("ask_walls") or []
-        if bids and asks:
-            bb = float(bids[0].get("price")); ba = float(asks[0].get("price"))
-            mid = (bb + ba) / 2.0
-            if mid > 0 and ba > bb:
-                spread = (ba - bb) / mid
-                depth = (sum(float(w.get("usd") or 0.0) for w in bids)
-                         + sum(float(w.get("usd") or 0.0) for w in asks))
-                return spread, depth, True
+        depth = (sum(float(w.get("usd") or 0.0) for w in bids)
+                 + sum(float(w.get("usd") or 0.0) for w in asks))
+        return sp, depth, True
     except Exception:  # noqa: BLE001
         pass
     return None, None, False
@@ -751,20 +752,25 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
                      sr.symbol, symbol_cands[0][0].strategy_id, symbol_cands[0][1].net_rr, _dropped)
         strat, c = symbol_cands[0]
 
-        # C.8 tier gating — SHADOW (log-only; changes NO live behavior). Logs what this candidate
-        # WOULD be gated to: its pair's tier, tier spread cap, admit/reject, allowed leverage
-        # (min tier/Kraken), tier risk multiplier. Enforcement is a later flip after this window.
+        # C.8 tier gating. Log-only until config.ENFORCE_TIER_GATE, then BINDS: a pair not in an
+        # active tier (DISABLED / tier_gate REJECT on the universal/tier spread cap) is rejected here,
+        # and a booked candidate is capped at the pair's tier leverage (min tier/Kraken) and sized by
+        # the tier risk multiplier (applied at sizing below).
         _ti = (tier_map or {}).get(sr.symbol) or {}
         _ctier = _ti.get("tier", "DISABLED")
         _cspread = float(ctx.spread_pct) if ctx.spread_pct is not None else None
         _cadmit, _creason = tiers.tier_gate(_ctier, _cspread)
         _ccap = tiers.TIERS.get(_ctier, {}).get("max_spread_pct")
-        log.info("C8_SHADOW_GATE %s tier=%s would=%s (%s) spread=%s/cap=%s lev=%s riskx=%s",
+        log.info("C8_%s_GATE %s tier=%s would=%s (%s) spread=%s/cap=%s lev=%s riskx=%s",
+                 ("ENFORCE" if config.ENFORCE_TIER_GATE else "SHADOW"),
                  sr.symbol, _ctier, ("ADMIT" if _cadmit else "REJECT"), _creason,
                  ("%.3f%%" % (_cspread * 100) if _cspread is not None else "NA"),
                  ("%.2f%%" % (_ccap * 100) if _ccap else "NA"),
                  ("%.2fx" % _ti["leverage"] if _ti.get("leverage") else "NA"),
                  (_ti.get("risk_mult") if _ti.get("risk_mult") is not None else "NA"))
+        if config.ENFORCE_TIER_GATE and not _cadmit:
+            log.info("RAID ENGINE: skip %s — tier gate REJECT (tier=%s, %s)", sr.symbol, _ctier, _creason)
+            continue
 
         # Opposite-direction protection: never open a short into an open long (or vice versa)
         # on the same symbol. Same-direction stacking is allowed.
@@ -827,13 +833,16 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         # Base = risk-sized notional capped at 5% of the DAILY equity base (compounds day over
         # day). Leverage scales the position notional; margin (= base) counts against the 95%
         # deployment cap (which uses live equity).
-        base_notional = min(float(decision.quantity) * float(c.reference_price) * size_mult, config.MAX_TRADE_SIZE_PCT * sizing_equity)
+        _tier_riskx = float(_ti.get("risk_mult") or 1.0) if config.ENFORCE_TIER_GATE else 1.0  # C.8: tier risk mult
+        base_notional = min(float(decision.quantity) * float(c.reference_price) * size_mult * _tier_riskx, config.MAX_TRADE_SIZE_PCT * sizing_equity)
         if base_notional < 10:
             continue
         # Per-pair leverage cap: never exceed Kraken's max for this symbol. 0 => not eligible
         # (fail closed; already filtered above, but re-checked here so leverage can never be
         # applied to an unfit pair).
         pair_lev = capped_leverage(eff_lev, sr.symbol)
+        if config.ENFORCE_TIER_GATE and _ti.get("leverage"):
+            pair_lev = min(pair_lev, float(_ti["leverage"]))   # C.8: never exceed the pair's tier leverage
         if pair_lev < 1:
             log.info("RAID ENGINE: skip %s — not margin-eligible at book time (fail closed)", sr.symbol)
             continue
@@ -841,7 +850,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         margin = base_notional
         if deployed_margin + margin > equity * config.MAX_EQUITY_DEPLOYED_PCT:
             continue
-        log.info("RAID ENGINE: SIZING %s $%.2f notional (%dx leverage, cap %sx, $%.2f margin)",
+        log.info("RAID ENGINE: SIZING %s $%.2f notional (%.2fx leverage, cap %sx, $%.2f margin)",
                  sr.symbol, notional, pair_lev, kraken_max_leverage(sr.symbol), margin)
 
         # B.5: portfolio-risk caps BIND. Risk-to-stop of THIS candidate on its sized notional; reject
