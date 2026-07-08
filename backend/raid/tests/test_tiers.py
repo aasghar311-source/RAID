@@ -37,12 +37,13 @@ def test_ladder_by_spread():
 
 
 def test_depth_multiple():
-    # depth below even OPPORTUNISTIC (3x500=1500 @10bps) -> DISABLED with DEPTH_TOO_LOW
-    t, r = T.classify_tier(_m(depth_10bps_usd=1000.0, depth_25bps_usd=1000.0))
+    ref = T.DEPTH_REF_USD                                    # track the constant, don't hardcode
+    # depth below even OPPORTUNISTIC (3x @10bps) -> DISABLED with DEPTH_TOO_LOW
+    t, r = T.classify_tier(_m(depth_10bps_usd=1.0, depth_25bps_usd=1.0))
     assert t == "DISABLED" and "DEPTH_TOO_LOW" in r
-    # depth exactly at AGGRESSIVE band (5x500=2500 @10bps, 15x500=7500 @25bps) + AGG spread -> AGGRESSIVE
-    assert T.classify_tier(_m(spread_pct=0.0020, depth_10bps_usd=2500.0,
-                              depth_25bps_usd=7500.0))[0] == "AGGRESSIVE"
+    # depth exactly at AGGRESSIVE band (5x @10bps, 15x @25bps) + AGG spread -> AGGRESSIVE
+    assert T.classify_tier(_m(spread_pct=0.0020, depth_10bps_usd=5 * ref,
+                              depth_25bps_usd=15 * ref))[0] == "AGGRESSIVE"
 
 
 def test_zero_and_low_vol_caps():

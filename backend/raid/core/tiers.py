@@ -17,9 +17,10 @@ TIER_ORDER = ("CORE", "AGGRESSIVE", "OPPORTUNISTIC", "DISABLED")
 UNIVERSAL_MAX_SPREAD_PCT = 0.0025          # §3 hard floor — nothing wider than 0.25% ever trades
 # §17 per-tier leverage ceilings (measure-only here; enforced in sizing at Stage G/C.9).
 TIER_MAX_LEVERAGE = {"CORE": 3.00, "AGGRESSIVE": 2.25, "OPPORTUNISTIC": 1.50}
-# Reference order size for the §7-9 depth MULTIPLES (depth@Xbps >= mult x this). Flagged for operator
-# confirmation — the §5-9 depth thresholds are given as multiples, not absolute USD.
-DEPTH_REF_USD = 500.0
+# Reference order size for the §7-9 depth MULTIPLES (depth@Xbps >= mult x this). Operator-set to the
+# real paper position notional: $4,000 account, <=5 open, 0.5-0.9% risk, up to 3x -> ~$400-1,200 typical
+# notional; $800 is the mid. So CORE @10bps needs >= 10 x $800 = $8,000 of executable depth.
+DEPTH_REF_USD = 800.0
 
 # Operator §5-§9 tables, verbatim. min_* => metric >= value; max_* => metric <= value;
 # *_mult => depth USD >= mult * DEPTH_REF_USD.
