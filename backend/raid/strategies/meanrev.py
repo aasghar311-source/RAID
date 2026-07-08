@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import config
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.provider import CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
@@ -27,10 +28,15 @@ _MIN_NET_RR = 1.20
 # edge. The safe lever is the RSI ceiling: it admits near-low entries on a neutral (not
 # deeply oversold) RSI while keeping the healthy near-low geometry. A target>px guard is
 # added so a booked entry can never sit at/above its own target.
-_BAND_MIN = 0.01
-_BAND_MAX = 0.10
+# _BAND_MIN RECALIBRATED for the liquid universe (harness): liquid ranges are TIGHT (median 1.33%,
+# p90 2.6%), and C4 reverts to the range MID (reward ~ band/2), so a band < ~6.9% gives reward < the
+# 1.04% round-trip cost and net_rr correctly REJECTS it. So the economic floor is ~6.9% -> only the
+# rare very-wide liquid range qualifies. FLAG: range mean-reversion is a STRUCTURALLY MARGINAL fit for
+# the liquid universe (tight ranges); C4 fires rarely by design, not by tuning. Was 0.01 (alt-tuned).
+_BAND_MIN = 0.069
+_BAND_MAX = 0.15             # was 0.10; raised so the (now-rare) wide liquid range isn't clipped
 _RANGE_POSITION_MAX = 0.33   # fraction of range height above the low (UNCHANGED)
-_RSI_MAX = 50                # was 45 — loosened per 124-trade review
+_RSI_MAX = 50                # leaning oversold (unchanged; liquid rsi median ~46)
 
 log.info("C4 config: RSI ceiling 45 -> %d (loosened per 124-trade review); "
          "position %.2f / band [%.2f, %.2f] unchanged (reference-price booking)",
@@ -41,11 +47,20 @@ class C4RangeMeanReversion(Strategy):
     strategy_id = "RAID-C4"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.RANGE})
+    eligible_regimes = frozenset()   # Stage-D: gated by the SPINE + C4's own range detection
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
+        # Stage-D: a range-low dip is a LONG — never fire on a down-trending pair (spine SHORT) or in
+        # a RISK_OFF/CRISIS book (a range low there is likely breaking down, not reverting).
+        if ctx.extras.get("spine_dir") == "SHORT" or \
+                ctx.extras.get("spine_portfolio") in ("RISK_OFF", "CRISIS", "UNKNOWN"):
+            return []
         f = ctx.feature(_TF)
         if f is None or f.swing_low is None or f.swing_high is None or f.rsi14 is None:
+            return []
+        # §10 range MINIMUM (completed-bar) — reject only DEAD-volume ranges (a dip, not a breakout).
+        vrc = ctx.extras.get("vol_ratio_completed")
+        if vrc is None or vrc < config.C4_VOLUME_MULT:
             return []
         lo, hi, px = f.swing_low, f.swing_high, f.last_price
         if hi <= lo:

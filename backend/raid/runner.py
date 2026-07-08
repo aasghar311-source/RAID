@@ -463,6 +463,7 @@ async def _market_state_shadow(scan_results, rankings, db, ts, now_epoch):
                  "gated_out=%d (own fast_dir contradicted the portfolio gate) — reconciled per-pair",
                  ms.portfolio.value, _dc.get("LONG", 0), _dc.get("SHORT", 0), _dc.get("NEUTRAL", 0),
                  len(pair_dirs), gated_out)
+        pair_dirs["_portfolio"] = ms.portfolio.value   # portfolio state for range/mean-rev strategies
         return pair_dirs
     except Exception as _ms_exc:  # noqa: BLE001 — shadow spine must never affect the cycle
         log.error("MARKET_STATE_SHADOW failed (skipped): %s", _ms_exc)
@@ -643,9 +644,12 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         if ctx is None:
             continue
         regime_tally[ctx.market_regime.value] = regime_tally.get(ctx.market_regime.value, 0) + 1
-        # Stage-D: thread the reconciled per-pair spine direction + the COMPLETED-bar volume ratio
-        # into the context so strategies gate on them (not the legacy regime / forming-bar volume).
+        # Stage-D: thread the reconciled per-pair spine direction + PORTFOLIO state + the COMPLETED-
+        # bar volume ratio into the context so strategies gate on them (not the legacy regime /
+        # forming-bar volume). Range/mean-reversion strategies (a ranging pair resolves NEUTRAL) gate
+        # on the portfolio state (don't buy dips in a RISK_OFF/CRISIS book), not the per-pair direction.
         ctx.extras["spine_dir"] = (spine_dirs or {}).get(sr.symbol)
+        ctx.extras["spine_portfolio"] = (spine_dirs or {}).get("_portfolio")
         ctx.extras["vol_ratio_completed"] = liquidity.volume_ratio(liquidity.drop_forming(sr.ohlcv, _now_epoch))
 
         # (a) Persist the per-symbol regime so the Regimes dashboard populates. This is

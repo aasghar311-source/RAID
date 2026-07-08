@@ -31,13 +31,15 @@ def _pos_vol_candles(n=25, prior_vol=100.0, latest_vol=200.0):
 
 
 def _ctx(regime: MarketRegime, feat: FeatureSnapshot, caps=frozenset({CAP_SPOT_LONG}), spread=0.0004,
-         spine_dir=None, vrc=None) -> StrategyContext:
+         spine_dir=None, vrc=None, spine_portfolio=None) -> StrategyContext:
     extras = {"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z",
               "candles_5m": _pos_vol_candles()}
     if spine_dir is not None:
-        extras["spine_dir"] = spine_dir            # Stage-D: C1/C3 gate on the reconciled spine
+        extras["spine_dir"] = spine_dir            # Stage-D: strategies gate on the reconciled spine
     if vrc is not None:
         extras["vol_ratio_completed"] = vrc        # + the §10 completed-bar volume
+    if spine_portfolio is not None:
+        extras["spine_portfolio"] = spine_portfolio   # portfolio state for range/mean-rev (C4)
     return StrategyContext(
         symbol="SOLUSD", instrument_id="SOLUSD", timestamp="2026-07-02T00:00:00Z",
         market_regime=regime, features={"5m": feat},
@@ -102,14 +104,19 @@ def test_c2_pullback_spine_gated():
 def test_c4_range_reversion_emits_candidate():
     reg = build_default_registry()
     c4 = reg.get("RAID-C4")
-    # Wide range 95..104, price near low, oversold RSI.
+    # Wide range 95..104, price near low, oversold RSI. Stage-D: ranging pair (NEUTRAL) + risk-on-ish book.
     feat = _feat(last_price=95.4, swing_low=95.0, swing_high=104.0, rsi14=38.0)
-    ctx = _ctx(MarketRegime.RANGE, feat)
+    ctx = _ctx(MarketRegime.RANGE, feat, spine_dir="NEUTRAL", spine_portfolio="MIXED", vrc=1.0)
     assert c4.is_eligible(ctx) is True
     cands = c4.generate_candidates(ctx)
     assert len(cands) == 1
     assert cands[0].direction == Direction.LONG
     assert cands[0].net_rr >= Decimal("1.20")
+    # Stage-D gates: RISK_OFF book -> no dip-buying; down-trending pair (SHORT) -> no range long
+    assert c4.generate_candidates(_ctx(MarketRegime.RANGE, feat, spine_dir="NEUTRAL",
+                                       spine_portfolio="RISK_OFF", vrc=1.0)) == []
+    assert c4.generate_candidates(_ctx(MarketRegime.RANGE, feat, spine_dir="SHORT",
+                                       spine_portfolio="MIXED", vrc=1.0)) == []
 
 
 def test_c3_short_is_shadow_gated():

@@ -54,16 +54,16 @@ def portfolio_at(majors_bars_by_sym, closes_by_sym, i):
     return MS.f1_portfolio_risk_state(majors, breadth), breadth
 
 
-def context_at(symbol, bars_upto_i, spine_dir):
+def context_at(symbol, bars_upto_i, spine_dir, spine_portfolio=None):
     """Build a StrategyContext for the COMPLETED bar i (bars_upto_i = bars[0..i]). 5m features only
-    (strategies fall back to the 5m ATR for the stop); nominal spread; spine_dir + completed-bar
-    volume_ratio threaded into extras exactly as the live runner does."""
+    (strategies fall back to the 5m ATR for the stop); nominal spread; spine_dir + spine_portfolio +
+    completed-bar volume_ratio threaded into extras exactly as the live runner does."""
     h, l, c = _ohlc(bars_upto_i)
     feat = F.build_feature_snapshot(f"bt-{symbol}", symbol, "5m", h, l, c)
     px = Decimal(str(c[-1]))
     extras = {"equity": 4000.0, "risk_pct": 0.005, "expiry_ts": str(int(bars_upto_i[-1][0])),
-              "candles_5m": bars_upto_i, "spine_dir": spine_dir,
-              "vol_ratio_completed": L.volume_ratio(bars_upto_i)}
+              "candles_5m": bars_upto_i, "spine_dir": spine_dir, "spine_portfolio": spine_portfolio,
+              "order_book": {}, "vol_ratio_completed": L.volume_ratio(bars_upto_i)}
     return StrategyContext(
         symbol=symbol, instrument_id=symbol, timestamp=str(int(bars_upto_i[-1][0])),
         market_regime=classify(feat).regime, features={"5m": feat},
@@ -90,7 +90,7 @@ def run(strategies, universe_bars, majors_bars, min_bar=BREADTH_LOOKBACK_BARS):
                 continue
             window = bars[: i + 1]
             sdir, _raw, _ = MS.resolve_pair_direction(portfolio, window)
-            ctx = context_at(sym, window, sdir.value)
+            ctx = context_at(sym, window, sdir.value, portfolio.value)
             for strat in strategies:
                 rec = out[strat.strategy_id]
                 rec["regime_bars"][portfolio.value] = rec["regime_bars"].get(portfolio.value, 0) + 1

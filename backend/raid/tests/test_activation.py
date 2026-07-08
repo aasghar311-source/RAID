@@ -314,7 +314,9 @@ def test_c4_rsi_ceiling_admits_neutral_rsi():
     from raid.strategies.meanrev import C4RangeMeanReversion
     c4 = C4RangeMeanReversion()
     # RSI 48 is above the OLD 45 ceiling but within the new 50 ceiling → now fires.
-    cands = c4.generate_candidates(_ctx(MarketRegime.RANGE, features={"5m": _c4_feat(48.0)}))
+    ctx = _ctx(MarketRegime.RANGE, features={"5m": _c4_feat(48.0)})
+    ctx.extras.update({"spine_dir": "NEUTRAL", "spine_portfolio": "MIXED", "vol_ratio_completed": 1.0})
+    cands = c4.generate_candidates(ctx)
     assert len(cands) == 1 and cands[0].strategy_id == "RAID-C4"
     # RSI 55 is above the new ceiling → still no trade.
     assert c4.generate_candidates(_ctx(MarketRegime.RANGE, features={"5m": _c4_feat(55.0)})) == []

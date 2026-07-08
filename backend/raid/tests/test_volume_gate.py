@@ -84,13 +84,15 @@ def test_thin_volume_floor():
     assert _build(_ctx(candles=_candles(latest_vol=30.0, prior_vol=100.0))) is None         # ratio 0.30 < 0.35
     assert _build(_ctx(candles=_candles(latest_vol=50.0, prior_vol=100.0))) is not None     # ratio 0.50 >= 0.35
     reg = build_default_registry()
-    c4 = reg.get("RAID-C4")   # no 1.5x threshold of its own -> exercises ONLY the shared gate
+    c4 = reg.get("RAID-C4")
     f4 = _feat(last_price=95.4, swing_low=95.0, swing_high=104.0, rsi14=38.0)
-    assert c4.generate_candidates(_ctx(candles=_candles(latest_vol=10.0, prior_vol=100.0),
-                                       regime=MarketRegime.RANGE, feat=f4)) == []            # 0.10 rejected
-    cands = c4.generate_candidates(_ctx(candles=_candles(latest_vol=50.0, prior_vol=100.0),
-                                        regime=MarketRegime.RANGE, feat=f4))
-    assert len(cands) == 1                                                                   # 0.50 passes
+
+    def _c4(vol):   # spine context so C4's own gates pass -> the SHARED A.2 gate (candles vr) is tested
+        cx = _ctx(candles=_candles(latest_vol=vol, prior_vol=100.0), regime=MarketRegime.RANGE, feat=f4)
+        cx.extras.update({"spine_dir": "NEUTRAL", "spine_portfolio": "MIXED", "vol_ratio_completed": 1.0})
+        return cx
+    assert c4.generate_candidates(_c4(10.0)) == []            # candles vr 0.10 < 0.35 -> A.2 rejects
+    assert len(c4.generate_candidates(_c4(50.0))) == 1        # candles vr 0.50 >= 0.35 -> passes
 
 
 # regression: normal positive volume still emits (long/positive path unchanged)

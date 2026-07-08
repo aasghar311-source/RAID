@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import config
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.provider import CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
@@ -16,24 +17,35 @@ from raid.strategies.helpers import build_candidate, atr_scaled_stop_dist, rr_ho
 CODE_VERSION = "omega-0.1.0"
 _TF = "5m"
 _MIN_NET_RR = 1.30
-# Compression thresholds: bandwidth below this fraction = squeezed.
-_BB_SQUEEZE = 0.02
-_DONCHIAN_SQUEEZE = 0.02
+# Compression thresholds RECALIBRATED for the liquid universe (harness): the absolute 0.02 was alt-
+# tuned and does NOT discriminate on low-vol liquid pairs (bb_bandwidth median ~0.0125, so ~75% of
+# bars read "squeezed"). A real squeeze on these pairs is the LOW percentile of their own bandwidth
+# (~p10-p25 ~= 0.008). Was 0.02 for both.
+_BB_SQUEEZE = 0.008
+_DONCHIAN_SQUEEZE = 0.008
 
 
 class C5VolatilityExpansion(Strategy):
     strategy_id = "RAID-C5"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    # Fires as the market leaves compression; RANGE (pre-break) is the setup regime.
-    eligible_regimes = frozenset({MarketRegime.RANGE})
+    eligible_regimes = frozenset()   # Stage-D: gated by the SPINE + C5's own squeeze detection
     atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
+        # Stage-D: an upside expansion is a LONG — never on a down-trending pair (spine SHORT) or in a
+        # RISK_OFF/CRISIS book.
+        if ctx.extras.get("spine_dir") == "SHORT" or \
+                ctx.extras.get("spine_portfolio") in ("RISK_OFF", "CRISIS", "UNKNOWN"):
+            return []
         f = ctx.feature(_TF)
         if f is None or f.bb_bandwidth is None or f.donchian_pct is None:
             return []
         if f.swing_high is None or f.ema20 is None or f.ema50 is None:
+            return []
+        # §10 breakout volume (completed-bar) — compression breakouts DO expand volume; 1.80x (operator).
+        vrc = ctx.extras.get("vol_ratio_completed")
+        if vrc is None or vrc < config.C5_VOLUME_MULT:
             return []
         # Require a genuine squeeze on BOTH measures (the compression regime).
         if f.bb_bandwidth > _BB_SQUEEZE or f.donchian_pct > _DONCHIAN_SQUEEZE:
