@@ -35,7 +35,7 @@ from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import (
     TIER_LIMITS, PortfolioRiskManager, PortfolioState, RiskTier, aggregate_open_risk,
-    effective_tier, graduated_size_decision,
+    effective_tier, graduated_size_decision, portfolio_cap_reason, symbol_cluster_index,
 )
 from raid.core.strategy import StrategyContext, StrategyMode
 from raid.core.universe import (
@@ -459,21 +459,28 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     # portfolio-risk gates WOULD block if fed it. total-open + correlated-cluster exist in
     # risk.assess but the runner feeds PortfolioState(equity, peak) only; same-direction has no gate
     # at all. Measure-only — NOT fed into risk.assess (the enforcement wiring is a later change).
+    _tl = TIER_LIMITS[effective_tier(_RISK.base_tier, drawdown)]
+    _agg = {"total": 0.0, "long": 0.0, "short": 0.0, "max_cluster": 0.0, "by_cluster": {}}
     try:
         _rt = effective_tier(_RISK.base_tier, drawdown)
         _tl = TIER_LIMITS[_rt]
         _agg = aggregate_open_risk(open_trades, equity, config.CORRELATED_PAIRS)
         log.info(
             "PORTFOLIO_RISK_SHADOW tier=%s open=%d total=%.3f%%/cap%.2f%%%s long=%.3f%% short=%.3f%% "
-            "max_cluster=%.3f%%/cap%.2f%%%s — measure-only (gates fed zeroed state)",
+            "max_cluster=%.3f%%/cap%.2f%%%s — %s",
             _rt.name, len(open_trades), _agg["total"] * 100, _tl.max_total_open_risk_pct * 100,
             " OVER" if _agg["total"] > _tl.max_total_open_risk_pct else "",
             _agg["long"] * 100, _agg["short"] * 100,
             _agg["max_cluster"] * 100, _tl.max_cluster_risk_pct * 100,
             " OVER" if _agg["max_cluster"] > _tl.max_cluster_risk_pct else "",
+            "ENFORCED (caps bind)" if config.ENFORCE_PORTFOLIO_RISK else "measure-only (gates fed zeroed state)",
         )
     except Exception as _pr_exc:  # noqa: BLE001 — measurement must never affect the cycle
         log.error("PORTFOLIO_RISK_SHADOW failed (skipped): %s", _pr_exc)
+    # B.5: running portfolio risk for the binding caps in the booking loop below — seeded from the
+    # real open book, then folded forward as each candidate books so intra-cycle stacking can't breach.
+    _run_risk = {"total": _agg["total"], "long": _agg["long"], "short": _agg["short"],
+                 "cluster": dict(_agg.get("by_cluster") or {})}
 
     # --- Cross-sectional universe ranking (computed ONCE per cycle) ---
     rankings = compute_universe_rankings(scan_results)
@@ -706,6 +713,26 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         log.info("RAID ENGINE: SIZING %s $%.2f notional (%dx leverage, cap %sx, $%.2f margin)",
                  sr.symbol, notional, pair_lev, kraken_max_leverage(sr.symbol), margin)
 
+        # B.5: portfolio-risk caps BIND. Risk-to-stop of THIS candidate on its sized notional; reject
+        # if it would push total / same-direction / cluster risk over cap (running risk = real open
+        # book + this cycle's prior bookings). _cand_risk/_cidx are also used to fold the booking in.
+        _ref = float(c.reference_price)
+        _cand_risk = (notional * abs(_ref - float(c.stop_price)) / _ref / equity
+                      if (_ref > 0 and equity > 0) else 0.0)
+        _cidx = symbol_cluster_index(sr.symbol, config.CORRELATED_PAIRS)
+        if config.ENFORCE_PORTFOLIO_RISK:
+            _cap = portfolio_cap_reason(
+                _cand_risk, c.direction.value, _cidx, _run_risk,
+                max_total=_tl.max_total_open_risk_pct, max_same_dir=config.MAX_SAME_DIRECTION_RISK_PCT,
+                max_cluster=_tl.max_cluster_risk_pct)
+            if _cap:
+                log.info("RAID ENGINE: portfolio-risk reject %s %s — %s cap "
+                         "(cand=%.3f%% total=%.3f%%/%.2f%% cluster=%.3f%%/%.2f%%)",
+                         sr.symbol, c.direction.value, _cap, _cand_risk * 100,
+                         _run_risk["total"] * 100, _tl.max_total_open_risk_pct * 100,
+                         _run_risk["cluster"].get(_cidx, 0.0) * 100, _tl.max_cluster_risk_pct * 100)
+                continue
+
         sig = Signal(
             market="crypto", symbol=sr.symbol, direction=c.direction.value, confidence=0.0,
             technical_score=0.0, news_sentiment="neutral", news_headline="", news_boost=0.0,
@@ -747,6 +774,12 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             booked += 1
             deployed_margin += margin
             open_symbols.add(sr.symbol)
+            # B.5: fold this booking into the running portfolio risk so a later candidate this cycle
+            # sees it (total/same-dir/cluster caps bind intra-cycle).
+            _run_risk["total"] += _cand_risk
+            _run_risk["long" if c.direction.value in ("long", "yes") else "short"] += _cand_risk
+            if _cidx is not None:
+                _run_risk["cluster"][_cidx] = _run_risk["cluster"].get(_cidx, 0.0) + _cand_risk
             # Keep the live concentration counts current so a later symbol this same cycle
             # (or a repeat) cannot slip past the caps.
             conc_symbol[sr.symbol] = conc_symbol.get(sr.symbol, 0) + 1

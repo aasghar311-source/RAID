@@ -123,7 +123,7 @@ def aggregate_open_risk(open_trades, equity, correlated_groups=None) -> dict:
     short, and the max correlated-cluster. Pure; feeds NO decision (measurement only)."""
     eq = float(equity or 0.0)
     if eq <= 0:
-        return {"total": 0.0, "long": 0.0, "short": 0.0, "max_cluster": 0.0}
+        return {"total": 0.0, "long": 0.0, "short": 0.0, "max_cluster": 0.0, "by_cluster": {}}
     sym_cluster: dict = {}
     for i, grp in enumerate(correlated_groups or []):
         for s in grp:
@@ -149,7 +149,34 @@ def aggregate_open_risk(open_trades, equity, correlated_groups=None) -> dict:
         if ci is not None:
             cluster[ci] = cluster.get(ci, 0.0) + risk_d
     max_cluster = max(cluster.values()) if cluster else 0.0
-    return {"total": total / eq, "long": long / eq, "short": short / eq, "max_cluster": max_cluster / eq}
+    return {"total": total / eq, "long": long / eq, "short": short / eq,
+            "max_cluster": max_cluster / eq, "by_cluster": {k: v / eq for k, v in cluster.items()}}
+
+
+def symbol_cluster_index(symbol, correlated_groups):
+    """Index of the correlated group `symbol` belongs to, or None. Mirrors aggregate_open_risk's
+    clustering so the binding gate keys a NEW candidate to the same cluster as the open book."""
+    for i, grp in enumerate(correlated_groups or []):
+        if symbol in grp:
+            return i
+    return None
+
+
+def portfolio_cap_reason(cand_risk, direction, cluster_idx, run, *, max_total, max_same_dir, max_cluster):
+    """B.5: the FIRST portfolio-risk cap a new candidate would breach given running risk `run`
+    ({'total','long','short','cluster':{idx:pct}} as equity fractions), or None if it fits. Pure —
+    the runner seeds `run` from aggregate_open_risk and updates it as each candidate books this cycle,
+    so intra-cycle stacking cannot slip past the caps. cand_risk<=0 never blocks (fail-open on noise)."""
+    if cand_risk <= 0:
+        return None
+    if run["total"] + cand_risk > max_total:
+        return "total"
+    dir_key = "long" if direction in ("long", "yes") else "short"
+    if run.get(dir_key, 0.0) + cand_risk > max_same_dir:
+        return "same_dir"
+    if cluster_idx is not None and run["cluster"].get(cluster_idx, 0.0) + cand_risk > max_cluster:
+        return "cluster"
+    return None
 
 
 @dataclass

@@ -179,6 +179,16 @@ QUOTE_PATH_CAPTURE = True
 # or exceeds MAX_SPREAD_PCT_UNIVERSAL. False = legacy 0.0004 fallback + flat 1.04% cost. Reversible.
 ENFORCE_REAL_SPREAD_DEPTH = True
 MAX_SPREAD_PCT_UNIVERSAL  = 0.0025   # Appendix-C §3 universal hard maximum spread (0.25% of mid)
+# B.5 (ENFORCE): bind the portfolio-risk caps in the booking loop. When True, a new candidate is
+# rejected if it would push total-open / same-direction / cluster risk over the cap, using running
+# risk seeded from real open positions (aggregate_open_risk) + this cycle's prior bookings. total &
+# cluster use the active tier limits; same-direction uses MAX_SAME_DIRECTION_RISK_PCT. False = the
+# old inert (zeroed-state) gate. Reversible.
+ENFORCE_PORTFOLIO_RISK = True
+# Same-direction risk cap. NON-BINDING sentinel now (= the tier total cap, so same-dir <= total never
+# binds independently); §G reconciles this DOWN to the aggressive 0.015 (1.50%) once B.5 is proven to
+# bind on live paper. B.5 wires the mechanism; §G sets the value.
+MAX_SAME_DIRECTION_RISK_PCT = 0.03
 # Post-close per-symbol cooldown: at 5-min cycles, block re-entering a symbol for this many
 # minutes after a trade on it closes (prevents churning the same stale setup). 15m = 3 cycles.
 SYMBOL_COOLDOWN_MINUTES = 15
