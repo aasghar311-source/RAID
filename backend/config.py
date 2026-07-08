@@ -173,6 +173,12 @@ CONSECUTIVE_LOSS_LOOKBACK = 50
 # loop only APPENDS to an in-memory buffer; the batched DB write is fire-and-forget so the loop is
 # never blocked. True = capture (self-disables if the table is absent). False = off. Reversible.
 QUOTE_PATH_CAPTURE = True
+# A.1 (ENFORCE): price entries at the REAL book spread, never the 0.0004 order-book fallback. When
+# True, build_candidate computes net_rr from dynamic_round_trip_cost_pct(real_spread) (hard-floored
+# at the 1.04% realized SSOT) and REJECTS any entry whose real spread is unknown/zero (fail-closed)
+# or exceeds MAX_SPREAD_PCT_UNIVERSAL. False = legacy 0.0004 fallback + flat 1.04% cost. Reversible.
+ENFORCE_REAL_SPREAD_DEPTH = True
+MAX_SPREAD_PCT_UNIVERSAL  = 0.0025   # Appendix-C §3 universal hard maximum spread (0.25% of mid)
 # Post-close per-symbol cooldown: at 5-min cycles, block re-entering a symbol for this many
 # minutes after a trade on it closes (prevents churning the same stale setup). 15m = 3 cycles.
 SYMBOL_COOLDOWN_MINUTES = 15

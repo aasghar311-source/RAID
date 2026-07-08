@@ -97,8 +97,23 @@ def build_candidate(
     # (costs.realized_round_trip_cost_pct ~1.04% — the SSOT), not the old 0.16% maker
     # assumption. The 1%/4% geometry clears min_net_rr 1.20 at this cost (~1.45).
     fp = costs.KRAKEN_TAKER_FEE_PCT if fee_pct is None else fee_pct   # taker — the engine's fill side
-    spread = float(ctx.spread_pct or 0.0)                            # book spread (audit metadata)
-    rt_cost = costs.realized_round_trip_cost_pct()
+    # A.1 ENFORCE: price at the REAL book spread, never the 0.0004 fallback. Unknown/zero spread or a
+    # spread wider than the universal cap -> reject (fail-closed, no fallback pricing); otherwise the
+    # cost is the dynamic round-trip built on the real spread (hard-floored at the 1.04% realized SSOT).
+    if config.ENFORCE_REAL_SPREAD_DEPTH:
+        _sp = ctx.spread_pct
+        _sp = float(_sp) if _sp is not None else None
+        if _sp is None or _sp <= 0.0 or _sp > config.MAX_SPREAD_PCT_UNIVERSAL:
+            return None
+        spread = _sp
+        # Calibrated components only (fees + REAL spread + slippage), floored at the 1.04% realized
+        # SSOT. The uncertainty_buffer is EXCLUDED here — it is a record-only reserve (see costs.py:
+        # "used by NO decision"); tight spreads therefore stay at the 1.04% floor, wide spreads cost
+        # more. The full-reserve figure (with buffer) is still RECORDED to cost_estimates per trade.
+        rt_cost = costs.dynamic_round_trip_cost_pct(spread_pct=_sp, uncertainty_buffer_pct=0.0)["total_pct"]
+    else:
+        spread = float(ctx.spread_pct or 0.0)                        # book spread (audit metadata)
+        rt_cost = costs.realized_round_trip_cost_pct()
     net_reward = gross_reward - rt_cost
     net_risk = gross_risk + rt_cost
     if net_risk <= 0 or net_reward <= 0:

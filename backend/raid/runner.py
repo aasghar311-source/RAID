@@ -228,13 +228,17 @@ def _context(sr, equity: float, ts: str, shared: dict | None = None):
             feats[tf] = fs
     if "5m" not in feats:
         return None
-    spread, depth_ok = _spread_depth(sr.order_book)
-    # B3 measure-first: compute the REAL spread/depth from the correct bid_walls/ask_walls keys and
-    # LOG it against the fallback the decision path still uses. Not enforced (a later atomic flip).
+    spread, depth_ok = _spread_depth(sr.order_book)   # legacy 0.0004 fallback
+    # A.1: the REAL spread/depth (B3 computed+logged it as shadow). Enforcing now, the gate PRICES on
+    # it: unknown book -> spread=None (build_candidate rejects, fail-closed; no fallback pricing).
     _rs, _rd, _rok = _real_spread_depth(sr.order_book)
     if _rok:
         log.info("SPREAD_DEPTH_SHADOW symbol=%s real_spread=%.5f real_depth_usd=%.0f "
-                 "used_spread=%.5f used_depth_ok=%s", sr.symbol, _rs, _rd, spread, depth_ok)
+                 "fallback_spread=%.5f enforced=%s", sr.symbol, _rs, _rd, spread,
+                 config.ENFORCE_REAL_SPREAD_DEPTH)
+    if config.ENFORCE_REAL_SPREAD_DEPTH:
+        spread = _rs if _rok else None    # price on real spread; None = fail-closed reject downstream
+        depth_ok = _rok
     px = Decimal(str(sr.current_price or feats["5m"].last_price))
     if px <= 0:
         return None
@@ -756,7 +760,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             # table; NOT an ALTER trades). RECORD-ONLY — the gate/P&L still use the flat 1.04% floor.
             if hasattr(db, "insert_cost_estimate"):
                 try:
-                    _ce = costs.dynamic_round_trip_cost_pct(spread_pct=float(ctx.spread_pct))
+                    _ce = costs.dynamic_round_trip_cost_pct(spread_pct=float(ctx.spread_pct or 0.0))
                     _ce.update({"trade_id": tid, "pair": sr.symbol, "direction": c.direction.value})
                     await db.insert_cost_estimate(_ce)
                 except Exception as _ce_exc:  # noqa: BLE001 — recording must never affect the cycle
