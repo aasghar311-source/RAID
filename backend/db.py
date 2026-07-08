@@ -755,6 +755,27 @@ async def capture_ohlcv_5m(rows: list) -> int:
         return 0
 
 
+async def get_ohlcv_5m(symbol: str) -> list:
+    """Backtest read path: stored 5m candles for `symbol`, OLDEST-FIRST, as [ts_epoch, o, h, l, c, v]
+    rows (the raw-candle shape the feature engine + strategies expect). Paginated; never raises."""
+    try:
+        rows = await _fetch_all("ohlcv_5m", "bar_ts, open, high, low, close, volume",
+                                eq_filters=[("symbol", symbol)])
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_ohlcv_5m failed for %s: %s", symbol, exc)
+        return []
+    out = []
+    for r in rows:
+        try:
+            ep = int(datetime.fromisoformat(str(r["bar_ts"]).replace("Z", "+00:00")).timestamp())
+            out.append([ep, float(r["open"]), float(r["high"]), float(r["low"]),
+                        float(r["close"]), float(r["volume"])])
+        except (TypeError, ValueError, KeyError):
+            continue
+    out.sort(key=lambda x: x[0])
+    return out
+
+
 # ── DRAWDOWN STATE (persisted high-water mark; survives restart) ──────────────
 # B1: the drawdown ladder's peak-equity high-water mark lives here (single row id=1) so a worker
 # restart/redeploy cannot reset it (the in-memory runner._peak_equity re-seeds to 0 on boot).
