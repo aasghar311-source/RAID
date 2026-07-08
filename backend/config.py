@@ -220,6 +220,14 @@ MIN_VOLUME_RATIO   = 0.35
 # gate not a tier property, parallel to MIN_VOLUME_RATIO). The most recent COMPLETED 5m bar must have
 # >= this USD volume to open; a thin fresh bar = no real market to fill into now. Reversible (0 = off).
 MIN_LATEST_5M_VOL_USD = 250.0
+# Applied against the §2 TRAILING volume, NOT the single latest 5m bar (measurement accuracy; the $250
+# floor is UNCHANGED). A liquid pair routinely has ONE no-trade 5m window (measured live on Kraken: NEAR
+# latest bar $55, LINK $238, UNI $48 — all with rich trailing windows), so judging tradeability off one
+# slice spuriously gated ~11 liquid pairs/cycle. Per Appendix-C §2, judge on trailing_20_completed_5m_
+# average (mean USD volume over the last N completed 5m bars ~= 100 min of genuine activity). A pair whose
+# trailing average is < $250 is genuinely thin and still cannot open — the floor and its intent are
+# preserved; only the measurement window changed (single bar -> trailing-20 average).
+LATEST_5M_VOL_TRAILING_BARS = 20        # §2 trailing_20 window (bars); the $250 floor is judged on this average
 # Stage-D strategy rebuild: strategies in this set are in the SHADOW state — they generate + LOG
 # candidates (STRATEGY_SHADOW) but book NOTHING (Appendix-B initial states). Remove from the set to
 # promote a strategy to live booking once its shadow traffic is validated. Reversible.

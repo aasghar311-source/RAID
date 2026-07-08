@@ -42,6 +42,18 @@ def test_usd_volume_conversion():
     assert abs(L.latest_5m_vol_usd(b) - 30000.0) < 1e-6            # 300 base * 100 close = 30000 USD
 
 
+def test_trailing20_vol_usd_robust_to_one_quiet_latest_bar():
+    # [ts,o,h,l,close,base_vol]; USD = base_vol*close. §2 trailing_20 average judges tradeability over
+    # ~100 min, so a genuinely-active pair whose ONE latest bar is quiet is NOT gated (mirrors live NEAR
+    # latest $55 vs a trailing avg well over $250) — while the single-bar read would spuriously gate it.
+    active = [[i * 300, 0, 0, 0, 100.0, 5.0] for i in range(19)] + [[19 * 300, 0, 0, 0, 100.0, 0.05]]
+    assert abs(L.latest_5m_vol_usd(active) - 5.0) < 1e-6          # single latest bar = 0.05*100 = $5 (would gate)
+    assert L.trailing20_vol_usd(active, 20) >= 250                # trailing-20 avg ~= $475 -> passes (recovered)
+    thin = [[i * 300, 0, 0, 0, 100.0, 0.1] for i in range(20)]
+    assert L.trailing20_vol_usd(thin, 20) < 250                  # genuinely thin ($10 avg) -> still gated
+    assert L.trailing20_vol_usd(active[:10], 20) is None         # < window bars -> None (fail-closed)
+
+
 def test_low_volume_rate_absolute():
     assert L.low_volume_rate(_c5(n=25, vol=100.0)) == 0.0          # $10,000/bar -> none below $250
     assert L.low_volume_rate(_c5(n=25, vol=1.0)) == 1.0           # $100/bar -> all below $250

@@ -705,13 +705,18 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("RAID ENGINE: skip %s — not Kraken margin-eligible (fail closed)", sr.symbol)
             continue
 
-        # (e) §3 per-entry latest-5m volume floor (moved out of tier classification — single-bar, so
-        # an ENTRY gate not a standing tier property; parallel to A.2's volume_ratio). The most recent
-        # COMPLETED 5m bar must clear $250 to open — a thin fresh bar means no real market right now.
-        _last5m_usd = liquidity.latest_5m_vol_usd(liquidity.drop_forming(sr.ohlcv, _now_epoch))
-        if _last5m_usd is None or _last5m_usd < config.MIN_LATEST_5M_VOL_USD:
-            log.info("RAID ENGINE: skip %s — latest completed 5m vol $%.0f < $%.0f floor",
-                     sr.symbol, _last5m_usd or 0.0, config.MIN_LATEST_5M_VOL_USD)
+        # (e) §3 per-entry volume floor (an ENTRY gate, not a standing tier property; parallel to A.2's
+        # volume_ratio). Judged on the §2 trailing_20_completed_5m_average (mean USD volume over the last
+        # N completed 5m bars ~= 100 min of genuine activity), NOT the single latest bar — so ONE no-trade
+        # 5m window doesn't spuriously gate an active pair (measured: NEAR latest $55 vs a trailing avg well
+        # over $250). The $250 floor is UNCHANGED; N = config.LATEST_5M_VOL_TRAILING_BARS.
+        _completed_5m = liquidity.drop_forming(sr.ohlcv, _now_epoch)
+        _last5m_usd = liquidity.latest_5m_vol_usd(_completed_5m)          # single latest bar (logged for reference)
+        _trail5m_usd = liquidity.trailing20_vol_usd(_completed_5m, config.LATEST_5M_VOL_TRAILING_BARS)
+        if _trail5m_usd is None or _trail5m_usd < config.MIN_LATEST_5M_VOL_USD:
+            log.info("RAID ENGINE: skip %s — 5m vol floor: trailing-%d avg $%.0f < $%.0f (latest bar $%.0f)",
+                     sr.symbol, config.LATEST_5M_VOL_TRAILING_BARS, _trail5m_usd or 0.0,
+                     config.MIN_LATEST_5M_VOL_USD, _last5m_usd or 0.0)
             continue
 
         # Collect candidates from every eligible paper strategy for this symbol.
