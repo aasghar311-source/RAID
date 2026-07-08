@@ -4,7 +4,6 @@ below support; no averaging down. Long sleeve is paper; shorts are shadow-only."
 
 from __future__ import annotations
 
-import logging
 from typing import Optional
 
 import config
@@ -13,21 +12,17 @@ from raid.core.provider import CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
 from raid.strategies.helpers import build_candidate
 
-log = logging.getLogger("raid.strategies.c4")
-
 CODE_VERSION = "omega-0.1.0"
 _TF = "5m"
 _MIN_NET_RR = 1.20
 
-# Range-entry gates. The RSI ceiling was LOOSENED 2026-07-03 per the 124-trade review:
-# C4 was 88.9% win / +$1.60 per trade but fired only 9x while ~80% of the market was in
-# RANGE. The position gate (lower third) and band width are LEFT UNCHANGED on purpose —
-# the runner books at the current price (reference_price) while C4's stop/target are
-# anchored to the range low, so widening those would admit trades whose booked entry
-# drifts far above the low (poor real geometry, or a degenerate tp<=entry), diluting C4's
-# edge. The safe lever is the RSI ceiling: it admits near-low entries on a neutral (not
-# deeply oversold) RSI while keeping the healthy near-low geometry. A target>px guard is
-# added so a booked entry can never sit at/above its own target.
+# Range-entry gates. RSI ceiling at the §2 spec (45, leaning oversold). NOTE: C4 is SHADOW
+# (config.STRATEGY_SHADOW) and structurally benched — it books nothing and fires ~0 on the liquid
+# universe (see the _BAND_MIN note below). The position gate (lower third) and band width are anchored
+# to the range low while the runner books at reference_price, so the RSI ceiling — not the position/
+# band — is the lever if C4 is ever reactivated. A target>px guard prevents a booked entry from
+# sitting at/above its own target. (The 2026-07-03 "124-trade review" loosening to 50 is reverted —
+# it was pre-Stage-D and inert once C4 went shadow; kept honest to spec.)
 # _BAND_MIN RECALIBRATED for the liquid universe (harness): liquid ranges are TIGHT (median 1.33%,
 # p90 2.6%), and C4 reverts to the range MID (reward ~ band/2), so a band < ~6.9% gives reward < the
 # 1.04% round-trip cost and net_rr correctly REJECTS it. So the economic floor is ~6.9% -> only the
@@ -36,11 +31,7 @@ _MIN_NET_RR = 1.20
 _BAND_MIN = 0.069
 _BAND_MAX = 0.15             # was 0.10; raised so the (now-rare) wide liquid range isn't clipped
 _RANGE_POSITION_MAX = 0.33   # fraction of range height above the low (UNCHANGED)
-_RSI_MAX = 50                # leaning oversold (unchanged; liquid rsi median ~46)
-
-log.info("C4 config: RSI ceiling 45 -> %d (loosened per 124-trade review); "
-         "position %.2f / band [%.2f, %.2f] unchanged (reference-price booking)",
-         _RSI_MAX, _RANGE_POSITION_MAX, _BAND_MIN, _BAND_MAX)
+_RSI_MAX = 45                # §2 spec ceiling (leaning oversold); reverted from the inert 50 loosening
 
 
 class C4RangeMeanReversion(Strategy):
@@ -71,7 +62,7 @@ class C4RangeMeanReversion(Strategy):
             return []
         if px > lo + _RANGE_POSITION_MAX * (hi - lo):   # only near the low
             return []
-        if f.rsi14 > _RSI_MAX:                    # leaning oversold (ceiling loosened 45 -> 50)
+        if f.rsi14 > _RSI_MAX:                    # leaning oversold (ceiling at §2 spec 45)
             return []
         limit = lo * 1.002                       # bid just above support
         stop = lo * (1 - 0.006)                  # invalidation below support

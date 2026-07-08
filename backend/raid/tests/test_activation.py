@@ -301,25 +301,27 @@ def test_trail_labeling_short_and_baddata():
     assert classify_stop_reason("long", 0, 99.0) == "stop_loss"            # fails closed on bad entry
 
 
-# ── FIX 3: C4 RSI ceiling loosened 45 -> 50 ──────────────────────────────────
+# ── C4 RSI ceiling at the §2 spec (45); reverted from the inert 2026-07-03 loosening to 50 ──
 
 def _c4_feat(rsi):
     # Wide range (95..104) so the reversion-to-mid target clears the HONEST 1.04% gate; this
-    # test isolates the RSI ceiling (48 admits, 55 rejects), not the economics. A narrow range
+    # test isolates the RSI ceiling (44 admits, 48 rejects), not the economics. A narrow range
     # would now be honestly gated out on net_rr, masking the RSI behavior under test.
     return _feat("5m", last_price=95.3, swing_low=95.0, swing_high=104.0, rsi14=rsi, atr_pct=0.008)
 
 
-def test_c4_rsi_ceiling_admits_neutral_rsi():
+def test_c4_rsi_ceiling_at_spec():
     from raid.strategies.meanrev import C4RangeMeanReversion
     c4 = C4RangeMeanReversion()
-    # RSI 48 is above the OLD 45 ceiling but within the new 50 ceiling → now fires.
-    ctx = _ctx(MarketRegime.RANGE, features={"5m": _c4_feat(48.0)})
+    # RSI 44 is within the §2 spec ceiling (45) → C4 emits (it's SHADOW, but generate_candidates fires).
+    ctx = _ctx(MarketRegime.RANGE, features={"5m": _c4_feat(44.0)})
     ctx.extras.update({"spine_dir": "NEUTRAL", "spine_portfolio": "MIXED", "vol_ratio_completed": 1.0})
     cands = c4.generate_candidates(ctx)
     assert len(cands) == 1 and cands[0].strategy_id == "RAID-C4"
-    # RSI 55 is above the new ceiling → still no trade.
-    assert c4.generate_candidates(_ctx(MarketRegime.RANGE, features={"5m": _c4_feat(55.0)})) == []
+    # RSI 48 is ABOVE the spec 45 ceiling → no trade (it WAS admitted under the reverted 50 loosening).
+    ctx2 = _ctx(MarketRegime.RANGE, features={"5m": _c4_feat(48.0)})
+    ctx2.extras.update({"spine_dir": "NEUTRAL", "spine_portfolio": "MIXED", "vol_ratio_completed": 1.0})
+    assert c4.generate_candidates(ctx2) == []
 
 
 # ── 5-MINUTE CYCLE changes ───────────────────────────────────────────────────
