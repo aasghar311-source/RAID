@@ -55,10 +55,22 @@ def test_strong_setup_reaches_aplus_or_better():
 
 
 def test_thin_edge_low_netrr_gated_down():
-    # identical strong context, but net_rr barely above the 1.20 cost floor -> post_cost_econ ~0
+    # identical strong context, but net_rr barely above the 1.20 cost floor -> low economics.
+    # With the liquid-calibrated anchor (FLOOR 1.20 -> ANCHOR 1.70), net_rr 1.25 -> post_cost_econ = 10.
     r = S.score_candidate(_strong_long_ctx(), _cand(Direction.LONG, 1.25))
     assert r.score < 88, r.log_str()                # cannot reach A+ on a thin edge alone
-    assert r.components["post_cost_econ"][0] < 10   # the net_rr drag is the cause
+    assert r.components["post_cost_econ"][0] < 15   # the net_rr drag is the cause (thin edge)
+
+
+def test_liquid_anchor_makes_aplus_reachable():
+    # Recalibrated post_cost_econ anchor (FLOOR 1.20 -> 0, ANCHOR 1.70 -> 100), data-set from the liquid
+    # net_rr distribution (p90 1.59 / p95 1.96). Under the old alt anchor (2.50) a liquid setup capped
+    # ~87 (A+ impossible); now a strong setup with a real net_rr reaches A+.
+    assert S.POST_COST_ANCHOR == 1.70 and S.POST_COST_FLOOR == 1.20
+    assert abs(S._lin(1.70, S.POST_COST_FLOOR, S.POST_COST_ANCHOR) - 100) < 1e-6   # top of range -> 100
+    assert abs(S._lin(1.45, S.POST_COST_FLOOR, S.POST_COST_ANCHOR) - 50) < 1e-6    # mid -> 50 (spread, not 0-12)
+    r = S.score_candidate(_strong_long_ctx(), _cand(Direction.LONG, 2.0))
+    assert r.score >= 88 and r.quality_lev >= 2.25, r.log_str()                    # A+ reachable now
 
 
 def test_weak_context_rejects():

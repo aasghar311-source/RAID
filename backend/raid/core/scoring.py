@@ -25,6 +25,12 @@ SCORE_APLUS = 88.0            # >= this -> A+  (2.25x)
 SCORE_APLUSPLUS = 94.0        # >= this -> A++ (3.0x)
 LEV_ORDINARY, LEV_APLUS, LEV_APLUSPLUS = 1.5, 2.25, 3.0
 
+# post_cost_econ (net_rr) sub-score anchors. FLOOR->0 points, ANCHOR->100 points. ANCHOR was 2.50
+# (old volatile-alt net_rr scale) which crushed the liquid range (net_rr ~1.2-1.7) to ~0-12; CALIBRATED
+# to the liquid net_rr distribution so a well-formed liquid setup earns real economics points.
+POST_COST_FLOOR = 1.20
+POST_COST_ANCHOR = 1.70
+
 # ── Component weights (sum 100). DESIGN — calibrate vs live distribution before enforce. ──
 WEIGHTS = {
     "market_state": 20,     # spine direction + portfolio conviction behind the trade
@@ -113,7 +119,7 @@ def _mtf_direction(ctx, d):
 
 def _post_cost_econ(candidate):
     rr = float(candidate.net_rr)
-    return _lin(rr, 1.20, 2.50) or 0.0, f"net_rr={rr:.3f}"   # 1.20 floor->0, 2.50->100
+    return _lin(rr, POST_COST_FLOOR, POST_COST_ANCHOR) or 0.0, f"net_rr={rr:.3f}"
 
 
 def _structure(ctx, d):

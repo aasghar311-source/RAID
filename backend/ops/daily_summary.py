@@ -116,7 +116,15 @@ async def main():
         if other["n"]:
             print(f"  other/untagged: {other['n']} trades | net P&L ${other['pnl']:+,.2f}")
         print(f"  TOTAL 24h net-of-cost P&L: ${total:+,.2f}")
-        if not recent:
+        # score-band tally (operator: track 80-87 ordinary / 88-93 A+ / 94+ A++ separately)
+        bands = {}
+        for t in recent:
+            _r = str(t.get("claude_reasoning") or "")
+            _b = _r.split("band=", 1)[1].split()[0] if "band=" in _r else "no-score"
+            bands[_b] = bands.get(_b, 0) + 1
+        if recent:
+            print(f"  by score band: {dict(sorted(bands.items()))}   (ordinary=1.5x / A+=2.25x / A++=3x)")
+        else:
             print("  (no trades in the last 24h — correct if the tape offered no qualifying setup)")
     except Exception as e:  # noqa: BLE001
         print(f"  ERR {repr(e)[:70]}")

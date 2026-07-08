@@ -256,7 +256,10 @@ ENFORCE_GATE_FAIL_CLOSED = True
 # the data — 88/80 were calibrated for the old volatile-alt universe and may be structurally too strict on
 # liquid pairs, like C3's 1.5x volume was). While False: score logged on every candidate; leverage stays
 # tier-based (no cap/reject). Flip True once the data-driven floor is chosen.
-ENFORCE_AB_SCORE = False
+# ENFORCED: floor 80 (operator, data-set). post_cost_econ anchor recalibrated 2.50->1.70 (liquid net_rr
+# p90=1.59/p95=1.96) so A+ (88-93) is reachable; A++ (94+) stays rare-by-merit. Reject <80; 80-87->1.5x;
+# 88-93->2.25x; >=94->3.0x; leverage = MIN(band, tier, Kraken).
+ENFORCE_AB_SCORE = True
 # §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
 # (stricter-wins over the tier). C3 RECALIBRATED from TWO live liquid-universe windows: breakdown
 # volume ratios grind low (median 0.3-0.5x, max 1.34x/0.98x — liquid pairs don't spike on breakdowns
