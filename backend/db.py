@@ -879,6 +879,31 @@ async def persist_market_state(row: dict) -> bool:
         return False
 
 
+# ── PAIR LIQUIDITY METRICS (Appendix-C §2 layer, C.6 SHADOW; measure-only) ─────
+_pair_liquidity_ok = True
+
+
+async def persist_pair_liquidity(rows: list) -> int:
+    """Best-effort BATCHED insert of §2 pair-liquidity metric rows (C.6 SHADOW) into
+    pair_liquidity_metrics. Returns the count written (0 if disabled/empty/failed). Never raises into
+    the cycle; self-disables on a table-absent error (apply migration 010)."""
+    global _pair_liquidity_ok
+    if not _pair_liquidity_ok or not rows:
+        return 0
+    try:
+        res = await supabase.table("pair_liquidity_metrics").insert(rows).execute()
+        return len(res.data or [])
+    except Exception as exc:  # noqa: BLE001 — shadow metrics must never affect the cycle
+        msg = str(exc).lower()
+        if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
+            _pair_liquidity_ok = False
+            log.error("pair_liquidity_metrics: table absent — persistence DISABLED for this process "
+                      "(apply migration 010): %s", exc)
+        else:
+            log.error("persist_pair_liquidity failed (%s)", exc)
+        return 0
+
+
 # ── PREDICTIONS ───────────────────────────────────────────────────────────
 
 async def log_prediction(entry: dict):

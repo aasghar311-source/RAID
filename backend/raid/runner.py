@@ -30,7 +30,7 @@ import costs
 import gate
 from signals import Signal
 
-from raid.core import features as F
+from raid.core import features as F, liquidity
 from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import (
@@ -304,6 +304,47 @@ def _pf(x):
     return ("%.4f" % x) if isinstance(x, (int, float)) else "na"
 
 
+async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
+    """C.6 Appendix-C §2 pair-liquidity metrics (SHADOW — measure-only). Computes the 15 metrics per
+    scanned pair (completed-candle, USD-quote), logs a universe summary INCLUDING the completed-vs-
+    forming volume_ratio A.2-pass shift (B.4 fold-in), and batch-persists to pair_liquidity_metrics.
+    Feeds NO gate (C.8 does). Never raises into the cycle."""
+    if not hasattr(db, "persist_pair_liquidity"):   # test double -> skip (no network in unit tests)
+        return
+    try:
+        rows = []
+        for sr in scan_results:
+            atrp = liquidity.atr_pct_1h(getattr(sr, "ohlcv_1h", None), sr.current_price)
+            m = liquidity.compute_pair_liquidity(
+                sr.symbol, sr.ohlcv, sr.order_book, sr.current_price, now_epoch,
+                atr_pct=atrp, volume_24h_usd=getattr(sr, "volume_24h", None))
+            m["cycle_ts"] = ts
+            rows.append(m)
+        if not rows:
+            return
+
+        def _med(vals):
+            xs = sorted(v for v in vals if v is not None)
+            return xs[len(xs) // 2] if xs else None
+
+        def _fmt(v):
+            return ("%.4f" % v) if v is not None else "NA"
+
+        spr_med = _med([r["spread_pct"] for r in rows])
+        vrc_med = _med([r["volume_ratio"] for r in rows])
+        vrf_med = _med([r["volume_ratio_forming"] for r in rows])
+        pass_c = sum(1 for r in rows if (r["volume_ratio"] or 0) >= config.MIN_VOLUME_RATIO)
+        pass_f = sum(1 for r in rows if (r["volume_ratio_forming"] or 0) >= config.MIN_VOLUME_RATIO)
+        log.info("PAIR_LIQUIDITY_SHADOW pairs=%d spread_med=%s vr_completed_med=%s vr_forming_med=%s "
+                 "A2pass completed=%d forming=%d (B.4 shift=%+d) — measure-only (migration 010)",
+                 len(rows), _fmt(spr_med), _fmt(vrc_med), _fmt(vrf_med), pass_c, pass_f, pass_c - pass_f)
+        written = await db.persist_pair_liquidity(rows)
+        if written:
+            log.info("PAIR_LIQUIDITY_SHADOW persisted rows=%d", written)
+    except Exception as exc:  # noqa: BLE001 — shadow metrics must never affect the cycle
+        log.error("PAIR_LIQUIDITY_SHADOW failed (skipped): %s", exc)
+
+
 async def _market_state_shadow(scan_results, rankings, db, ts, now_epoch):
     """Stage-C market-state spine (SHADOW — measure-only). Computes F1-F5 from live COMPLETED-bar
     data every cycle, logs MARKET_STATE_SHADOW beside the legacy regime label, and persists to
@@ -488,6 +529,11 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     # Stage-C market-state spine (SHADOW — measure-only; books nothing, feeds no decision, no sizing/
     # exit change). Logs MARKET_STATE_SHADOW + persists market_state_log alongside the legacy regime.
     await _market_state_shadow(scan_results, rankings, db, ts, _now_epoch)
+
+    # C.6 Appendix-C §2 pair-liquidity metrics (SHADOW — measure-only; feeds no gate yet). Computes
+    # the 15 metrics per pair completed-candle + USD-quote, logs a universe summary + the completed-
+    # vs-forming volume_ratio shift (B.4), and batch-persists (self-disabling).
+    await _pair_liquidity_shadow(scan_results, db, ts, _now_epoch)
 
     # Per-strategy last-entry time (open + recently-closed trades) drives the C6
     # rebalance throttle; the open-symbol set prevents C6/C7 from stacking a name.
