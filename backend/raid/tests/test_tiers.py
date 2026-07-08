@@ -52,6 +52,21 @@ def test_zero_and_low_vol_caps():
     assert t == "DISABLED" and "LOW_VOLUME_RATE_TOO_HIGH" in r
 
 
+def test_latest_5m_not_a_tier_criterion():
+    # latest_5m_volume moved to a per-entry gate — a thin latest bar no longer changes the tier
+    assert T.classify_tier(_m(latest_5m_vol_usd=10.0)) == ("CORE", [])
+    assert T.classify_tier(_m(latest_5m_vol_usd=None)) == ("CORE", [])
+
+
+def test_tier_gate():
+    assert T.tier_gate("CORE", 0.0010) == (True, "OK")             # within CORE 0.15% cap
+    assert T.tier_gate("CORE", 0.0020)[0] is False                 # 0.20% > CORE cap -> reject
+    assert T.tier_gate("AGGRESSIVE", 0.0020) == (True, "OK")       # within AGG 0.22% cap
+    assert T.tier_gate("OPPORTUNISTIC", 0.0024) == (True, "OK")    # within OPP 0.25% cap
+    assert T.tier_gate("DISABLED", 0.0001)[0] is False             # not an active tier -> reject
+    assert T.tier_gate("CORE", None)[0] is False                   # unknown spread -> reject
+
+
 def test_leverage_and_classify_pair():
     assert T.tradeable_leverage("CORE", 10) == 3.00                          # min(3.00, 10)
     assert T.tradeable_leverage("OPPORTUNISTIC", 2) == 1.50                  # min(1.50, 2)

@@ -216,6 +216,10 @@ ATR_STOP_MAX       = 0.040    # 4.0% ceiling
 # Appendix-C §3 universal hard minimum (a 5m bar below 0.35x its ~20-bar average volume is too thin
 # to fill economically). Subsumes the old hard-zero gate (0.0 <= 0.35). Reversible (0.0 = hard-zero).
 MIN_VOLUME_RATIO   = 0.35
+# §3 per-entry latest-5m volume floor (moved out of tier classification — single-bar, so an ENTRY
+# gate not a tier property, parallel to MIN_VOLUME_RATIO). The most recent COMPLETED 5m bar must have
+# >= this USD volume to open; a thin fresh bar = no real market to fill into now. Reversible (0 = off).
+MIN_LATEST_5M_VOL_USD = 250.0
 # C7 short sleeve (PAPER). Independent, runtime-checked flag: when True, C7 shorts the bottom-
 # quintile laggard in a TREND_DOWN regime (mirror of C3's short path). OFF => C7 shorts stay
 # shadow-only (no C7 shorts booked; C3 and C7-long unaffected). ON RECORD: enabling this REVERSES a

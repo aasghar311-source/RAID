@@ -308,9 +308,9 @@ async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
     """C.6 Appendix-C §2 pair-liquidity metrics (SHADOW — measure-only). Computes the 15 metrics per
     scanned pair (completed-candle, USD-quote), logs a universe summary INCLUDING the completed-vs-
     forming volume_ratio A.2-pass shift (B.4 fold-in), and batch-persists to pair_liquidity_metrics.
-    Feeds NO gate (C.8 does). Never raises into the cycle."""
+    Returns {symbol: {tier, leverage, risk_mult}} for the C.8 SHADOW gate. Never raises."""
     if not hasattr(db, "persist_pair_liquidity"):   # test double -> skip (no network in unit tests)
-        return
+        return {}
     try:
         rows = []
         for sr in scan_results:
@@ -322,7 +322,7 @@ async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
             m["cycle_ts"] = ts
             rows.append(m)
         if not rows:
-            return
+            return {}
 
         def _med(vals):
             xs = sorted(v for v in vals if v is not None)
@@ -347,8 +347,11 @@ async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
         # §5-9 thresholds + the §9 leverage-unknown DISABLE + the tradeable leverage (stricter of the
         # §17 tier cap and the Kraken per-pair cap). Logs the distribution + active-tier leverage.
         dist = {t: [] for t in tiers.TIER_ORDER}
+        tier_map = {}
         for r in rows:
             tier, _reasons, lev = tiers.classify_pair(r, kraken_max_leverage(r["symbol"]))
+            tier_map[r["symbol"]] = {"tier": tier, "leverage": lev,
+                                     "risk_mult": tiers.TIER_RISK_MULT.get(tier)}
             dist[tier].append((r["symbol"], lev))
 
         def _members(t):
@@ -358,8 +361,10 @@ async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
                  "(of %d) — measure-only (depth=full-book)",
                  len(dist["CORE"]), _members("CORE"), len(dist["AGGRESSIVE"]), _members("AGGRESSIVE"),
                  len(dist["OPPORTUNISTIC"]), _members("OPPORTUNISTIC"), len(dist["DISABLED"]), len(rows))
+        return tier_map
     except Exception as exc:  # noqa: BLE001 — shadow metrics must never affect the cycle
         log.error("PAIR_LIQUIDITY_SHADOW failed (skipped): %s", exc)
+    return {}
 
 
 async def _market_state_shadow(scan_results, rankings, db, ts, now_epoch):
@@ -550,7 +555,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
     # C.6 Appendix-C §2 pair-liquidity metrics (SHADOW — measure-only; feeds no gate yet). Computes
     # the 15 metrics per pair completed-candle + USD-quote, logs a universe summary + the completed-
     # vs-forming volume_ratio shift (B.4), and batch-persists (self-disabling).
-    await _pair_liquidity_shadow(scan_results, db, ts, _now_epoch)
+    tier_map = await _pair_liquidity_shadow(scan_results, db, ts, _now_epoch)
 
     # Per-strategy last-entry time (open + recently-closed trades) drives the C6
     # rebalance throttle; the open-symbol set prevents C6/C7 from stacking a name.
@@ -670,6 +675,15 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("RAID ENGINE: skip %s — not Kraken margin-eligible (fail closed)", sr.symbol)
             continue
 
+        # (e) §3 per-entry latest-5m volume floor (moved out of tier classification — single-bar, so
+        # an ENTRY gate not a standing tier property; parallel to A.2's volume_ratio). The most recent
+        # COMPLETED 5m bar must clear $250 to open — a thin fresh bar means no real market right now.
+        _last5m_usd = liquidity.latest_5m_vol_usd(liquidity.drop_forming(sr.ohlcv, _now_epoch))
+        if _last5m_usd is None or _last5m_usd < config.MIN_LATEST_5M_VOL_USD:
+            log.info("RAID ENGINE: skip %s — latest completed 5m vol $%.0f < $%.0f floor",
+                     sr.symbol, _last5m_usd or 0.0, config.MIN_LATEST_5M_VOL_USD)
+            continue
+
         # Collect candidates from every eligible paper strategy for this symbol.
         symbol_cands = []
         for strat in paper_strats:
@@ -697,6 +711,21 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             log.info("RAID ENGINE: dedupe %s — keep %s(rr=%s), drop %s",
                      sr.symbol, symbol_cands[0][0].strategy_id, symbol_cands[0][1].net_rr, _dropped)
         strat, c = symbol_cands[0]
+
+        # C.8 tier gating — SHADOW (log-only; changes NO live behavior). Logs what this candidate
+        # WOULD be gated to: its pair's tier, tier spread cap, admit/reject, allowed leverage
+        # (min tier/Kraken), tier risk multiplier. Enforcement is a later flip after this window.
+        _ti = (tier_map or {}).get(sr.symbol) or {}
+        _ctier = _ti.get("tier", "DISABLED")
+        _cspread = float(ctx.spread_pct) if ctx.spread_pct is not None else None
+        _cadmit, _creason = tiers.tier_gate(_ctier, _cspread)
+        _ccap = tiers.TIERS.get(_ctier, {}).get("max_spread_pct")
+        log.info("C8_SHADOW_GATE %s tier=%s would=%s (%s) spread=%s/cap=%s lev=%s riskx=%s",
+                 sr.symbol, _ctier, ("ADMIT" if _cadmit else "REJECT"), _creason,
+                 ("%.3f%%" % (_cspread * 100) if _cspread is not None else "NA"),
+                 ("%.2f%%" % (_ccap * 100) if _ccap else "NA"),
+                 ("%.2fx" % _ti["leverage"] if _ti.get("leverage") else "NA"),
+                 (_ti.get("risk_mult") if _ti.get("risk_mult") is not None else "NA"))
 
         # Opposite-direction protection: never open a short into an open long (or vice versa)
         # on the same symbol. Same-direction stacking is allowed.

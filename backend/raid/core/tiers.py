@@ -17,6 +17,12 @@ TIER_ORDER = ("CORE", "AGGRESSIVE", "OPPORTUNISTIC", "DISABLED")
 UNIVERSAL_MAX_SPREAD_PCT = 0.0025          # §3 hard floor — nothing wider than 0.25% ever trades
 # §17 per-tier leverage ceilings (measure-only here; enforced in sizing at Stage G/C.9).
 TIER_MAX_LEVERAGE = {"CORE": 3.00, "AGGRESSIVE": 2.25, "OPPORTUNISTIC": 1.50}
+# Per-tier risk multiplier for the C.8 gate (SHADOW; the §16 base/A+/A++ risk %s are applied at
+# Stage G). CORE full risk, lower tiers scaled down.
+TIER_RISK_MULT = {"CORE": 1.00, "AGGRESSIVE": 0.70, "OPPORTUNISTIC": 0.50}
+# NOTE: latest_5m_volume is NOT a tier criterion — it is a single-bar value, so it lives as a
+# per-entry gate (config.MIN_LATEST_5M_VOL_USD, enforced in the runner, parallel to A.2's
+# volume_ratio). Tier stays a STANDING liquidity property.
 # Reference order size for the §7-9 depth MULTIPLES (depth@Xbps >= mult x this). Operator-set to the
 # real paper position notional: $4,000 account, <=5 open, 0.5-0.9% risk, up to 3x -> ~$400-1,200 typical
 # notional; $800 is the mid. So CORE @10bps needs >= 10 x $800 = $8,000 of executable depth.
@@ -28,21 +34,21 @@ TIERS = {
     "CORE": {
         "min_dollar_vol_24h": 1_500_000.0, "min_dollar_vol_30d_median": 1_000_000.0,
         "min_dollar_vol_5m_median": 2_500.0, "min_trailing20_vol_usd": 2_000.0,
-        "min_latest_5m_vol_usd": 1_500.0, "max_spread_pct": 0.0015, "max_slippage_p90": 0.0012,
+        "max_spread_pct": 0.0015, "max_slippage_p90": 0.0012,
         "min_depth_10bps_mult": 10.0, "min_depth_25bps_mult": 30.0,
         "max_zero_volume_rate": 0.03, "max_low_volume_rate": 0.20,
     },
     "AGGRESSIVE": {
         "min_dollar_vol_24h": 500_000.0, "min_dollar_vol_30d_median": 350_000.0,
         "min_dollar_vol_5m_median": 800.0, "min_trailing20_vol_usd": 650.0,
-        "min_latest_5m_vol_usd": 500.0, "max_spread_pct": 0.0022, "max_slippage_p90": 0.0018,
+        "max_spread_pct": 0.0022, "max_slippage_p90": 0.0018,
         "min_depth_10bps_mult": 5.0, "min_depth_25bps_mult": 15.0,
         "max_zero_volume_rate": 0.05, "max_low_volume_rate": 0.30,
     },
     "OPPORTUNISTIC": {
         "min_dollar_vol_24h": 250_000.0, "min_dollar_vol_30d_median": 200_000.0,
         "min_dollar_vol_5m_median": 350.0, "min_trailing20_vol_usd": 300.0,
-        "min_latest_5m_vol_usd": 250.0, "max_spread_pct": 0.0025, "max_slippage_p90": 0.0020,
+        "max_spread_pct": 0.0025, "max_slippage_p90": 0.0020,
         "min_depth_10bps_mult": 3.0, "min_depth_25bps_mult": 10.0,
         "max_zero_volume_rate": 0.07, "max_low_volume_rate": 0.35,
     },
@@ -120,3 +126,15 @@ def classify_pair(metrics, kraken_cap):
     if kraken_cap is None:
         return "DISABLED", list(dict.fromkeys(reasons + ["PAIR_LEVERAGE_UNKNOWN"])), None
     return tier, reasons, tradeable_leverage(tier, kraken_cap)
+
+
+def tier_gate(tier, spread_pct):
+    """C.8 tier gate: would a candidate on a pair of this `tier` be admitted at `spread_pct`?
+    Returns (allowed, reason). DISABLED/unknown tier -> reject (only active tiers open); spread over
+    the tier's own cap -> reject; else admit. Pure — the runner logs this in SHADOW, then enforces."""
+    if tier not in TIERS:
+        return False, "TIER_NOT_ACTIVE"
+    cap = TIERS[tier]["max_spread_pct"]
+    if spread_pct is None or spread_pct > cap:
+        return False, "SPREAD_OVER_TIER_CAP"
+    return True, "OK"
