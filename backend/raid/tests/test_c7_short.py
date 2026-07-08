@@ -36,10 +36,12 @@ def _rank(rank, n, ret):
 
 
 def _ctx(regime=MarketRegime.TREND_DOWN, caps=frozenset({CAP_SPOT_LONG, CAP_SHORT}),
-         rank=10, n=10, ret=-0.05, candles=None, ref=100.0) -> StrategyContext:
+         rank=10, n=10, ret=-0.05, candles=None, ref=100.0, spine_dir=None) -> StrategyContext:
     extras = {"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z",
               "universe_rankings": {"SOLUSD": _rank(rank, n, ret)},
               "candles_5m": _candles() if candles is None else candles}
+    if spine_dir is not None:
+        extras["spine_dir"] = spine_dir       # Stage-D: C7 long branch gates on the reconciled spine
     return StrategyContext(
         symbol="SOLUSD", instrument_id="SOLUSD", timestamp="2026-07-02T00:00:00Z",
         market_regime=regime, features={"5m": _feat("5m"), "1h": _feat("1h")},
@@ -85,16 +87,18 @@ def test_c7_short_flag_off_no_short():
         config.C7_SHORT_ENABLED = True
 
 
-# (g) regression: C7-long unaffected in TREND_UP; guarded OFF in TREND_DOWN
+# (g) regression: C7-long fires on a LONG spine; gated OFF when the spine resolves the pair SHORT
 def test_c7_long_unaffected_in_trend_up():
     config.C7_SHORT_ENABLED = True
-    cands = _c7().generate_candidates(_ctx(regime=MarketRegime.TREND_UP, rank=1, n=10, ret=0.05))
+    cands = _c7().generate_candidates(_ctx(regime=MarketRegime.TREND_UP, rank=1, n=10, ret=0.05, spine_dir="LONG"))
     assert len(cands) == 1 and cands[0].direction == Direction.LONG
 
 
 def test_c7_no_long_in_trend_down():
+    # Stage-D: a down tape resolves the pair SHORT -> the spine gate blocks the long even at rank 1.
     config.C7_SHORT_ENABLED = True
-    assert _c7().generate_candidates(_ctx(regime=MarketRegime.TREND_DOWN, rank=1, n=10, ret=0.05)) == []
+    assert _c7().generate_candidates(
+        _ctx(regime=MarketRegime.TREND_DOWN, rank=1, n=10, ret=0.05, spine_dir="SHORT")) == []
 
 
 # (d) shared short PnL sign is net of the 1.04% round-trip cost

@@ -223,7 +223,7 @@ MIN_LATEST_5M_VOL_USD = 250.0
 # Stage-D strategy rebuild: strategies in this set are in the SHADOW state — they generate + LOG
 # candidates (STRATEGY_SHADOW) but book NOTHING (Appendix-B initial states). Remove from the set to
 # promote a strategy to live booking once its shadow traffic is validated. Reversible.
-STRATEGY_SHADOW = {"RAID-C1", "RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5"}
+STRATEGY_SHADOW = {"RAID-C1", "RAID-C2", "RAID-C3", "RAID-C4", "RAID-C5", "RAID-C6", "RAID-C7", "RAID-C10"}
 # §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
 # (stricter-wins over the tier). C3 RECALIBRATED from TWO live liquid-universe windows: breakdown
 # volume ratios grind low (median 0.3-0.5x, max 1.34x/0.98x — liquid pairs don't spike on breakdowns

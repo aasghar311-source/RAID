@@ -103,10 +103,15 @@ class C6RelativeStrengthRotation(Strategy):
     strategy_id = "RAID-C6"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.TREND_UP})
+    eligible_regimes = frozenset()   # Stage-D: gated by the SPINE + the cross-sectional ranking
     atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
+        # Stage-D: rotate into a leader ONLY when the spine resolves this pair LONG (an up-trending
+        # leader in a risk-on/mixed book). A name that is merely the least-falling in a RISK_OFF tape
+        # resolves NEUTRAL/SHORT and is correctly skipped — no "strongest of the falling knives".
+        if ctx.extras.get("spine_dir") != "LONG":
+            return []
         me = _rankings(ctx).get(ctx.symbol)
         if not me or me["rank"] > C6_TOP_N:
             return []
@@ -137,11 +142,10 @@ class C7CrossSectionalMomentum(Strategy):
     strategy_id = "RAID-C7"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    # TREND_DOWN is now eligible so the short sleeve is REACHABLE; whether it actually books a short
-    # is gated at runtime by config.C7_SHORT_ENABLED (below). The long branch is guarded to never
-    # fire in TREND_DOWN, so with the flag OFF, C7 produces no candidates in TREND_DOWN (same net
-    # outcome as when TREND_DOWN was ineligible) — the flag, not the regime set, is the on/off.
-    eligible_regimes = frozenset({MarketRegime.TREND_UP, MarketRegime.RANGE, MarketRegime.TREND_DOWN})
+    # Stage-D: the legacy regime gate is REMOVED (eligible_regimes empty). The long branch is gated
+    # by the SPINE (spine_dir == "LONG"); the short branch stays gated by config.C7_SHORT_ENABLED
+    # (OFF — the measured ~-$33 C7-short-in-RANGE bleed stays disabled), shadow-logged only.
+    eligible_regimes = frozenset()
     atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
@@ -155,8 +159,8 @@ class C7CrossSectionalMomentum(Strategy):
 
         # Top quintile → long winner (hold; do not re-add a name already open).
         if me["rank"] <= quintile:
-            if ctx.market_regime == MarketRegime.TREND_DOWN:
-                return []                              # guard: never long a winner in a downtrend
+            if ctx.extras.get("spine_dir") != "LONG":
+                return []                              # Stage-D: only long a winner the spine resolves LONG
             if _already_open(ctx):
                 return []
             if me["return_24h"] <= 0:

@@ -37,7 +37,7 @@ class C10LiquiditySweepReversal(Strategy):
     strategy_id = "RAID-C10"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.VOLATILE, MarketRegime.CRISIS})
+    eligible_regimes = frozenset()   # Stage-D: gated by the SPINE (portfolio state) + the sweep detector
 
     @staticmethod
     def sweep_tradeable(direction: str) -> bool:
@@ -45,6 +45,12 @@ class C10LiquiditySweepReversal(Strategy):
         return direction == "long"
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
+        # Stage-D: a swept-low reversal is a mean-reversion LONG. Fade idiosyncratic grabs in a
+        # risk-on/mixed book, but NEVER buy a "bounce" into a systemic RISK_OFF/CRISIS tape (the
+        # sweep decays straight through). The pair's own fast_dir is intentionally NOT gated here —
+        # a swept low is down by construction; the portfolio state is the coherent gate.
+        if ctx.extras.get("spine_portfolio") in ("RISK_OFF", "CRISIS", "UNKNOWN"):
+            return []
         sweep = detect_liquidity_sweep(ctx.extras.get("candles_5m"), ctx.extras.get("order_book"))
         if sweep is None:
             return []

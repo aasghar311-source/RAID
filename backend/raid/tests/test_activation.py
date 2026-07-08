@@ -132,7 +132,7 @@ def test_c6_is_eligible_true():
 
 
 def test_c6_emits_long_for_top_ranked_uptrend():
-    ctx = _ctx(MarketRegime.TREND_UP, extras={"universe_rankings": {"SOLUSD": _rank(1, 10)}})
+    ctx = _ctx(MarketRegime.TREND_UP, extras={"universe_rankings": {"SOLUSD": _rank(1, 10)}, "spine_dir": "LONG"})
     cands = C6RelativeStrengthRotation().generate_candidates(ctx)
     assert len(cands) == 1
     assert cands[0].direction == Direction.LONG and cands[0].strategy_id == "RAID-C6"
@@ -140,21 +140,21 @@ def test_c6_emits_long_for_top_ranked_uptrend():
 
 
 def test_c6_declines_when_outside_top_five():
-    ctx = _ctx(MarketRegime.TREND_UP, extras={"universe_rankings": {"SOLUSD": _rank(7, 20)}})
+    ctx = _ctx(MarketRegime.TREND_UP, extras={"universe_rankings": {"SOLUSD": _rank(7, 20)}, "spine_dir": "LONG"})
     assert C6RelativeStrengthRotation().generate_candidates(ctx) == []
 
 
 def test_c6_rebalance_limiter_blocks_within_cooldown():
     # Same top-ranked setup, but the runner has flagged the rebalance window closed.
     ctx = _ctx(MarketRegime.TREND_UP, extras={
-        "universe_rankings": {"SOLUSD": _rank(1, 10)}, "c6_rebalance_ok": False,
+        "universe_rankings": {"SOLUSD": _rank(1, 10)}, "c6_rebalance_ok": False, "spine_dir": "LONG",
     })
     assert C6RelativeStrengthRotation().generate_candidates(ctx) == []
 
 
 def test_c6_does_not_stack_open_symbol():
     ctx = _ctx(MarketRegime.TREND_UP, extras={
-        "universe_rankings": {"SOLUSD": _rank(1, 10)}, "open_symbols": {"SOLUSD"},
+        "universe_rankings": {"SOLUSD": _rank(1, 10)}, "open_symbols": {"SOLUSD"}, "spine_dir": "LONG",
     })
     assert C6RelativeStrengthRotation().generate_candidates(ctx) == []
 
@@ -166,7 +166,7 @@ def test_c7_is_eligible_true():
 
 
 def test_c7_emits_long_for_top_quintile():
-    ctx = _ctx(MarketRegime.TREND_UP, extras={"universe_rankings": {"SOLUSD": _rank(1, 10)}})
+    ctx = _ctx(MarketRegime.TREND_UP, extras={"universe_rankings": {"SOLUSD": _rank(1, 10)}, "spine_dir": "LONG"})
     cands = C7CrossSectionalMomentum().generate_candidates(ctx)
     assert len(cands) == 1 and cands[0].strategy_id == "RAID-C7"
 
@@ -181,7 +181,7 @@ def test_c7_bottom_quintile_is_shadow_short_only():
 def test_c7_does_not_duplicate_open_c6_position():
     # C6 already holds SOLUSD (in open_symbols) -> C7 must not also open it.
     ctx = _ctx(MarketRegime.TREND_UP, extras={
-        "universe_rankings": {"SOLUSD": _rank(1, 10)}, "open_symbols": {"SOLUSD"},
+        "universe_rankings": {"SOLUSD": _rank(1, 10)}, "open_symbols": {"SOLUSD"}, "spine_dir": "LONG",
     })
     assert C7CrossSectionalMomentum().generate_candidates(ctx) == []
 
