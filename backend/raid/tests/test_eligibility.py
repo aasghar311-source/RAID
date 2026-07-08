@@ -16,10 +16,10 @@ REMOVED = ["SLXUSD", "SYNUSD", "GWEIUSD", "RAVEUSD", "PENDLEUSD", "FILUSD"]
 
 
 def test_removed_pairs_not_in_universe():
-    # The old spot-only / sub-3x removals stay out; universe is now the top-40 ATR set.
+    # The old spot-only / sub-3x removals stay out; universe is the 40 ATR set + TRX + BTC (C.7).
     for s in REMOVED:
         assert s not in config.PRIORITY_PAIRS, s
-    assert len(config.PRIORITY_PAIRS) == 40, len(config.PRIORITY_PAIRS)
+    assert len(config.PRIORITY_PAIRS) == 42, len(config.PRIORITY_PAIRS)
 
 
 def test_removed_pairs_not_margin_eligible_and_fail_closed():
@@ -31,8 +31,8 @@ def test_removed_pairs_not_margin_eligible_and_fail_closed():
 
 def test_all_universe_pairs_margin_eligible_and_mapped():
     # Every priority pair must be in the leverage map and margin-eligible (>=2x). XLMUSD caps
-    # at 2x; the rest >=3x. No spot-only pair may be in the universe.
-    assert len(config.KRAKEN_MAX_LEVERAGE) == 40
+    # at 2x; the rest >=3x. No spot-only pair may be in the universe. 42 = 40 + TRX + BTC (C.7).
+    assert len(config.KRAKEN_MAX_LEVERAGE) == 42
     assert set(config.PRIORITY_PAIRS) == set(config.KRAKEN_MAX_LEVERAGE)
     for s in config.PRIORITY_PAIRS:
         assert is_margin_eligible(s), s

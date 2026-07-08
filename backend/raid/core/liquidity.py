@@ -24,9 +24,14 @@ BPS = 1e-4
 # Reference sizes/geometry for the size-dependent metrics (calibration inputs, NOT thresholds):
 REF_ORDER_USD_P50 = 500.0     # a typical paper position notional — slippage_p50 fills this
 REF_ORDER_USD_P90 = 2000.0    # a large order — slippage_p90 fills this
-LOW_VOLUME_FLOOR = 0.35       # a 5m bar is "low volume" if its own ratio < this (= universal min)
-VOL_RATIO_WINDOW = 20         # trailing bars for volume_ratio / low_volume_rate
+VOL_RATIO_WINDOW = 20         # trailing bars for volume_ratio
 REF_RR = 2.0                  # reference reward:risk for the pair-level net_rr characterisation
+# §2 low_volume_rate = fraction of recent completed 5m bars whose USD volume is below this ABSOLUTE
+# floor (chronic thinness — parallel to zero_volume_rate). Set to the OPPORTUNISTIC latest-5m floor
+# ($250): reads ~0 for genuinely liquid pairs, high only for truly thin ones. (An earlier relative
+# "< 0.35x trailing mean" definition measured burstiness and wrongly disabled liquid pairs.)
+LOW_VOLUME_USD_FLOOR = 250.0
+LOW_VOLUME_WINDOW = 60        # recent completed 5m bars (~5h) for the low-volume rate
 
 
 # ---- completed-candle guard (B.4 folded in) ----
@@ -102,21 +107,11 @@ def zero_volume_rate(completed_5m, window: int = 60):
     return (sum(1 for v in vols if v <= 0.0) / len(vols)) if vols else None
 
 
-def low_volume_rate(completed_5m, floor: float = LOW_VOLUME_FLOOR, window: int = VOL_RATIO_WINDOW):
-    """Fraction of recent bars whose OWN volume_ratio (vs the trailing `window` up to it) is < floor —
-    i.e. how often the pair is thin. None on insufficient history."""
-    vols = [v for v in (_base_vol(b) for b in completed_5m) if v is not None]
-    if len(vols) < window + 1:
-        return None
-    lows = n = 0
-    for i in range(window, len(vols)):
-        avg = sum(vols[i - window:i]) / window
-        if avg <= 0:
-            continue
-        n += 1
-        if vols[i] / avg < floor:
-            lows += 1
-    return (lows / n) if n else None
+def low_volume_rate(completed_5m, usd_floor: float = LOW_VOLUME_USD_FLOOR, window: int = LOW_VOLUME_WINDOW):
+    """§2: fraction of the recent `window` completed 5m bars whose USD-quote volume is below
+    `usd_floor` (ABSOLUTE chronic thinness). None if no bars. Reads ~0 for liquid pairs."""
+    xs = [v for v in (_usd_vol(b) for b in completed_5m[-window:]) if v is not None]
+    return (sum(1 for v in xs if v < usd_floor) / len(xs)) if xs else None
 
 
 # ---- LIQUIDITY (5) ----

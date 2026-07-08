@@ -42,6 +42,15 @@ def test_usd_volume_conversion():
     assert abs(L.latest_5m_vol_usd(b) - 30000.0) < 1e-6            # 300 base * 100 close = 30000 USD
 
 
+def test_low_volume_rate_absolute():
+    assert L.low_volume_rate(_c5(n=25, vol=100.0)) == 0.0          # $10,000/bar -> none below $250
+    assert L.low_volume_rate(_c5(n=25, vol=1.0)) == 1.0           # $100/bar -> all below $250
+    bars = _c5(n=25, vol=100.0)
+    for i in range(10):
+        bars[i][5] = 1.0                                          # 10 thin bars ($100) of 25
+    assert abs(L.low_volume_rate(bars) - 10 / 25) < 1e-9
+
+
 def test_dollar_vol_30d_median():
     daily = [[i * 86400, 100, 101, 99, 100, 1000.0] for i in range(30)]   # USD = 1000*100 = 100000
     assert abs(L.dollar_vol_30d_median(daily) - 100000.0) < 1e-6

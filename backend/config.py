@@ -290,6 +290,7 @@ PRIORITY_PAIRS = [
     "PUMPUSD", "ZECUSD", "CRVUSD", "NEARUSD", "AAVEUSD", "INJUSD", "HYPEUSD", "SUIUSD",
     "HBARUSD", "XRPUSD", "FETUSD", "LTCUSD", "XMRUSD", "ONDOUSD", "XDGUSD", "SOLUSD",
     "DOTUSD", "AVAXUSD", "UNIUSD", "TAOUSD", "CCUSD", "BCHUSD", "LINKUSD", "ETHUSD",
+    "TRXUSD", "XBTUSD",   # C.7: TRX clears OPPORTUNISTIC; BTC clears CORE (deepest book) + is the spine sensor
 ]
 
 # Per-pair Kraken max margin leverage (RAW, from public AssetPairs leverage arrays). RAID's
@@ -303,6 +304,9 @@ KRAKEN_MAX_LEVERAGE = {
     "HBARUSD": 5, "XRPUSD": 10, "FETUSD": 3, "LTCUSD": 10, "XMRUSD": 5, "ONDOUSD": 3,
     "XDGUSD": 10, "SOLUSD": 10, "DOTUSD": 5, "AVAXUSD": 10, "UNIUSD": 5, "TAOUSD": 5,
     "CCUSD": 3, "BCHUSD": 5, "LINKUSD": 10, "ETHUSD": 10,
+    # C.7 additions. XBTUSD=5 (operator). TRXUSD=3 (conservative; TRX is OPPORTUNISTIC so its 1.50
+    # tier cap binds regardless — raise if Kraken's real TRX cap is higher).
+    "TRXUSD": 3, "XBTUSD": 5,
 }
 OHLCV_CANDLES         = 300      # candles per pair fetched
 KRAKEN_QUOTES         = ("ZUSD", "USD")
