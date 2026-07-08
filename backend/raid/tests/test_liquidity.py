@@ -42,6 +42,13 @@ def test_usd_volume_conversion():
     assert abs(L.latest_5m_vol_usd(b) - 30000.0) < 1e-6            # 300 base * 100 close = 30000 USD
 
 
+def test_dollar_vol_30d_median():
+    daily = [[i * 86400, 100, 101, 99, 100, 1000.0] for i in range(30)]   # USD = 1000*100 = 100000
+    assert abs(L.dollar_vol_30d_median(daily) - 100000.0) < 1e-6
+    assert L.dollar_vol_30d_median([]) is None                     # no daily history -> None
+    assert L.dollar_vol_30d_median(None) is None
+
+
 # ---- liquidity (5) ----
 def test_spread_depth_slippage():
     bk = _book()
@@ -75,13 +82,17 @@ def test_atr_pct_1h():
 
 # ---- aggregate (15 metrics + instrumentation) ----
 def test_compute_pair_liquidity_shape():
+    daily = [[i * 86400, 100, 101, 99, 100, 5000.0] for i in range(30)]
     m = L.compute_pair_liquidity("SOLUSD", _c5(n=25, vol=100.0, latest_vol=200.0), _book(),
-                                 price=100.0, now_epoch=None, atr_pct=0.02, volume_24h_usd=1_000_000.0)
+                                 price=100.0, now_epoch=None, atr_pct=0.02, volume_24h_usd=1_000_000.0,
+                                 ohlcv_1d=daily)
     for k in ("symbol", "dollar_vol_24h", "dollar_vol_30d_median", "dollar_vol_5m_median",
               "latest_5m_vol_usd", "volume_ratio", "zero_volume_rate", "low_volume_rate", "spread_pct",
               "depth_10bps_usd", "depth_25bps_usd", "slippage_p50", "slippage_p90", "dynamic_cost_pct",
               "target_cost_multiple", "net_rr", "volume_ratio_forming", "completed_bars"):
         assert k in m
-    assert m["dollar_vol_30d_median"] is None                     # UNAVAILABLE (no 30d history)
+    assert m["dollar_vol_30d_median"] is not None                 # available once daily is supplied
     assert m["dollar_vol_24h"] == 1_000_000.0
     assert m["volume_ratio"] is not None and m["spread_pct"] is not None
+    # no daily -> 30d median fails closed to None
+    assert L.compute_pair_liquidity("X", _c5(), _book(), 100.0, None)["dollar_vol_30d_median"] is None

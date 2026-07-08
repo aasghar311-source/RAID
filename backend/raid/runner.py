@@ -30,7 +30,7 @@ import costs
 import gate
 from signals import Signal
 
-from raid.core import features as F, liquidity
+from raid.core import features as F, liquidity, tiers
 from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import (
@@ -317,7 +317,8 @@ async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
             atrp = liquidity.atr_pct_1h(getattr(sr, "ohlcv_1h", None), sr.current_price)
             m = liquidity.compute_pair_liquidity(
                 sr.symbol, sr.ohlcv, sr.order_book, sr.current_price, now_epoch,
-                atr_pct=atrp, volume_24h_usd=getattr(sr, "volume_24h", None))
+                atr_pct=atrp, volume_24h_usd=getattr(sr, "volume_24h", None),
+                ohlcv_1d=getattr(sr, "ohlcv_1d", None))
             m["cycle_ts"] = ts
             rows.append(m)
         if not rows:
@@ -341,6 +342,19 @@ async def _pair_liquidity_shadow(scan_results, db, ts, now_epoch):
         written = await db.persist_pair_liquidity(rows)
         if written:
             log.info("PAIR_LIQUIDITY_SHADOW persisted rows=%d", written)
+
+        # C.7 tier classification (SHADOW — log-only; no persistence, no gating). Each pair earns the
+        # best tier its real §2 metrics support; logs the CORE/AGGRESSIVE/OPPORTUNISTIC/SHADOW/DISABLED
+        # distribution so the universe spread is visible before C.8 enforces anything.
+        dist = {t: [] for t in tiers.TIER_ORDER}
+        for r in rows:
+            tier, _ = tiers.classify_tier(r)
+            dist[tier].append(r["symbol"])
+        log.info("PAIR_TIER_SHADOW CORE=%d%s AGGRESSIVE=%d%s OPPORTUNISTIC=%d SHADOW=%d DISABLED=%d "
+                 "(of %d) — measure-only (no gating)",
+                 len(dist["CORE"]), (":" + ",".join(dist["CORE"][:8]) if dist["CORE"] else ""),
+                 len(dist["AGGRESSIVE"]), (":" + ",".join(dist["AGGRESSIVE"][:8]) if dist["AGGRESSIVE"] else ""),
+                 len(dist["OPPORTUNISTIC"]), len(dist["SHADOW"]), len(dist["DISABLED"]), len(rows))
     except Exception as exc:  # noqa: BLE001 — shadow metrics must never affect the cycle
         log.error("PAIR_LIQUIDITY_SHADOW failed (skipped): %s", exc)
 

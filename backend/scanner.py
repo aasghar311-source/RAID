@@ -60,6 +60,7 @@ class ScanResult:
     ohlcv_1h: list = field(default_factory=list)  # 1-hour candles for HTF trend
     ohlcv_15m: list = field(default_factory=list)  # 15-minute candles for MTF trend
     ohlcv_30m: list = field(default_factory=list)  # 30-minute candles for MTF trend
+    ohlcv_1d: list = field(default_factory=list)  # daily candles for the §2 30-day median (C.7)
     funding_rate: float = 0.0  # Kraken Futures perpetual rate (pos=crowded long, neg=crowded short)
     order_book: dict = field(default_factory=dict)  # Top 3 bid/ask walls by USD volume
     open_interest: float = 0.0  # Kraken Futures perpetual OI (contract value)
@@ -77,7 +78,7 @@ def _now_iso():
 # 5m refreshes every cycle, 15m every 3rd, 30m every 6th, 1h every 12th; a cold entry
 # always fetches. Cuts avg OHLCV calls/cycle from ~96 to ~38. The cache is transparent to
 # the runner — every ScanResult still carries all four timeframes each cycle.
-_TF_REFRESH_CYCLES = {"5m": 1, "15m": 3, "30m": 6, "1h": 12}
+_TF_REFRESH_CYCLES = {"5m": 1, "15m": 3, "30m": 6, "1h": 12, "1d": 288}  # 1d ~ once/24h
 _ohlcv_cache: dict = {}          # {symbol: {tf_key: (rows, fetched_at)}}
 _cycle_counter = 0
 _CALL_PACING_SECONDS = 0.25      # await between live Kraken calls — raised from 0.15 for the
@@ -333,6 +334,9 @@ async def scan_kraken():
                     ohlcv_1h = await _fetch_ohlcv_cached(client, altname, 60, "1h", 60)
                     ohlcv_15m = await _fetch_ohlcv_cached(client, altname, 15, "15m", 60)
                     ohlcv_30m = await _fetch_ohlcv_cached(client, altname, 30, "30m", 60)
+                    # Daily candles for the §2 30-day USD-volume median (C.7). Cached ~24h so this
+                    # adds one Kraken call per pair only ~once/day; feeds the tier classifier.
+                    ohlcv_1d = await _fetch_ohlcv_cached(client, altname, 1440, "1d", 30)
                     # Order book depth — fetched EVERY cycle (C10 sweep detection needs
                     # current depth), not cached. Paced like the OHLCV calls.
                     order_book_data = {}
@@ -349,6 +353,7 @@ async def scan_kraken():
                             ohlcv_1h=ohlcv_1h,
                             ohlcv_15m=ohlcv_15m,
                             ohlcv_30m=ohlcv_30m,
+                            ohlcv_1d=ohlcv_1d,
                             current_price=current or 0.0,
                             volume_24h=volumes.get(altname),
                             funding_rate=funding_rates.get(altname, 0.0),

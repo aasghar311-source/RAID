@@ -66,6 +66,14 @@ def dollar_vol_5m_median(completed_5m):
     return median(xs) if xs else None
 
 
+def dollar_vol_30d_median(completed_1d, days: int = 30):
+    """Median USD-quote daily volume over the last `days` COMPLETED daily bars. None if no daily
+    history (fail-closed -> the tier classifier treats a pair with None here as failing the active-
+    tier 30d minimum)."""
+    xs = [v for v in (_usd_vol(b) for b in (completed_1d or [])[-days:]) if v is not None]
+    return median(xs) if xs else None
+
+
 def latest_5m_vol_usd(completed_5m):
     return _usd_vol(completed_5m[-1]) if completed_5m else None
 
@@ -209,11 +217,12 @@ def cost_metrics(spread, atr_pct, rr_ref: float = REF_RR):
 
 # ---- aggregate ----
 def compute_pair_liquidity(symbol, ohlcv_5m, order_book, price, now_epoch, atr_pct=None,
-                           volume_24h_usd=None):
+                           volume_24h_usd=None, ohlcv_1d=None):
     """All 15 §2 metrics for one pair, plus the forming-bar volume_ratio (for the B.4 before/after)
-    and the completed-bar count. Volume metrics use ONLY completed bars. Pure; missing inputs -> None
-    on the affected metrics (never raises)."""
+    and the completed-bar count. Volume metrics use ONLY completed bars (5m and daily). Pure; missing
+    inputs -> None on the affected metrics (never raises)."""
     completed = drop_forming(ohlcv_5m, now_epoch)
+    completed_1d = drop_forming(ohlcv_1d, now_epoch, interval_s=86400)   # drop today's forming day
     forming_vr = volume_ratio(ohlcv_5m)          # what A.2 gates on TODAY (forming bar included)
     spread = spread_pct(order_book)
     cost, tcm, nrr = cost_metrics(spread, atr_pct)
@@ -221,7 +230,7 @@ def compute_pair_liquidity(symbol, ohlcv_5m, order_book, price, now_epoch, atr_p
         "symbol": symbol,
         # VOLUME(7)
         "dollar_vol_24h": float(volume_24h_usd) if volume_24h_usd is not None else None,
-        "dollar_vol_30d_median": None,           # UNAVAILABLE: no 30d daily history fetched
+        "dollar_vol_30d_median": dollar_vol_30d_median(completed_1d),
         "dollar_vol_5m_median": dollar_vol_5m_median(completed),
         "latest_5m_vol_usd": latest_5m_vol_usd(completed),
         "volume_ratio": volume_ratio(completed),  # §2: COMPLETED-candle
