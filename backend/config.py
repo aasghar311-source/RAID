@@ -220,6 +220,13 @@ MIN_VOLUME_RATIO   = 0.35
 # gate not a tier property, parallel to MIN_VOLUME_RATIO). The most recent COMPLETED 5m bar must have
 # >= this USD volume to open; a thin fresh bar = no real market to fill into now. Reversible (0 = off).
 MIN_LATEST_5M_VOL_USD = 250.0
+# Stage-D strategy rebuild: strategies in this set are in the SHADOW state — they generate + LOG
+# candidates (STRATEGY_SHADOW) but book NOTHING (Appendix-B initial states). Remove from the set to
+# promote a strategy to live booking once its shadow traffic is validated. Reversible.
+STRATEGY_SHADOW = {"RAID-C3"}
+# §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
+# (stricter-wins over the tier). C3 short-breakdown mirrors C1's breakout confirmation (1.50).
+C3_VOLUME_MULT = 1.50
 # C7 short sleeve (PAPER). Independent, runtime-checked flag: when True, C7 shorts the bottom-
 # quintile laggard in a TREND_DOWN regime (mirror of C3's short path). OFF => C7 shorts stay
 # shadow-only (no C7 shorts booked; C3 and C7-long unaffected). ON RECORD: enabling this REVERSES a

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import config
 from raid.core.candidate import Candidate, Direction, EntryType, MarketRegime
 from raid.core.provider import CAP_SHORT, CAP_SPOT_LONG
 from raid.core.strategy import ExitDecision, Strategy, StrategyContext
@@ -138,11 +139,15 @@ class C2LongTrendPullback(Strategy):
 class C3ShortTrendBreakdown(Strategy):
     strategy_id = "RAID-C3"
     version = CODE_VERSION
-    required_capabilities = frozenset({CAP_SHORT})   # shadow-only until short enabled
-    eligible_regimes = frozenset({MarketRegime.TREND_DOWN})
+    required_capabilities = frozenset({CAP_SHORT})
+    eligible_regimes = frozenset()   # Stage-D: gated by the reconciled SPINE, not the legacy regime
     atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
+        # Stage-D: direction from the reconciled per-pair spine — fire ONLY when the pair resolves
+        # SHORT (portfolio RISK_OFF/MIXED + the pair's own down-structure). Never a short on a RISK_ON book.
+        if ctx.extras.get("spine_dir") != "SHORT":
+            return []
         f = ctx.feature(_PRIMARY_TF)
         if f is None or f.swing_low is None or f.ema20 is None or f.ema50 is None:
             return []
@@ -151,6 +156,13 @@ class C3ShortTrendBreakdown(Strategy):
         support = f.swing_low
         px = f.last_price
         if not (support * 0.998 <= px <= support * 1.015):
+            return []
+        # §10 volume override — the breakdown must expand volume, measured on the COMPLETED bar (the
+        # runner threads vol_ratio_completed so we never read the partial forming bar).
+        vrc = ctx.extras.get("vol_ratio_completed")
+        if vrc is None or vrc < config.C3_VOLUME_MULT:
+            log.info("C3: skip %s — breakdown volume %s < %.2fx (completed-bar)", ctx.symbol,
+                     ("%.2f" % vrc if vrc is not None else "NA"), config.C3_VOLUME_MULT)
             return []
         trigger = support * 0.999                # confirm the breakdown
         stop_dist = atr_scaled_stop_dist(ctx, f.atr_pct)            # 1.5x 1h-ATR, bounded [0.6%,4%]

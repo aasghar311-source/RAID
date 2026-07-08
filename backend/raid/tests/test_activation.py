@@ -367,12 +367,20 @@ def test_c3_generates_short_with_correct_geometry():
     feat = _feat("5m", last_price=100.0, swing_low=100.0, swing_high=110.0,
                  ema20=99.0, ema50=101.0, atr_pct=0.01)
     ctx = _ctx(MarketRegime.TREND_DOWN, features={"5m": feat}, caps=frozenset({CAP_SHORT}))
+    ctx.extras["spine_dir"] = "SHORT"            # Stage-D: C3 now gates on the reconciled spine
+    ctx.extras["vol_ratio_completed"] = 2.0      # + the §10 completed-bar volume (>= 1.50)
     cands = C3ShortTrendBreakdown().generate_candidates(ctx)
     assert len(cands) == 1
     c = cands[0]
     assert c.direction == Direction.SHORT and c.strategy_id == "RAID-C3"
     assert float(c.stop_price) > float(c.reference_price)   # short SL ABOVE entry
     assert float(c.targets[0]) < float(c.reference_price)   # short TP BELOW entry
+    # spine gate: no SHORT unless the spine resolves SHORT; §10 volume gate: below 1.50x -> none
+    ctx.extras["spine_dir"] = "NEUTRAL"
+    assert C3ShortTrendBreakdown().generate_candidates(ctx) == []
+    ctx.extras["spine_dir"] = "SHORT"
+    ctx.extras["vol_ratio_completed"] = 1.0
+    assert C3ShortTrendBreakdown().generate_candidates(ctx) == []
 
 
 def test_c7_short_flag_gated_to_trend_down():

@@ -643,6 +643,10 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         if ctx is None:
             continue
         regime_tally[ctx.market_regime.value] = regime_tally.get(ctx.market_regime.value, 0) + 1
+        # Stage-D: thread the reconciled per-pair spine direction + the COMPLETED-bar volume ratio
+        # into the context so strategies gate on them (not the legacy regime / forming-bar volume).
+        ctx.extras["spine_dir"] = (spine_dirs or {}).get(sr.symbol)
+        ctx.extras["vol_ratio_completed"] = liquidity.volume_ratio(liquidity.drop_forming(sr.ohlcv, _now_epoch))
 
         # (a) Persist the per-symbol regime so the Regimes dashboard populates. This is
         # pure OBSERVABILITY and must run for EVERY symbol regardless of book capacity —
@@ -711,10 +715,20 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             if not strat.is_eligible(ctx):
                 continue
             cands = strat.generate_candidates(ctx)
+            if not cands:
+                continue
+            produced_by[strat.strategy_id] = produced_by.get(strat.strategy_id, 0) + len(cands)
+            if strat.strategy_id in config.STRATEGY_SHADOW:
+                # Stage-D SHADOW state: log what the (recalibrated) strategy WOULD trade; book NOTHING.
+                for c in cands:
+                    _vrc = ctx.extras.get("vol_ratio_completed")
+                    log.info("STRATEGY_SHADOW %s %s %s ref=%.6f sl=%.6f tp=%.6f net_rr=%s spine=%s vr_completed=%s",
+                             strat.strategy_id, sr.symbol, c.direction.value, float(c.reference_price),
+                             float(c.stop_price), float(c.targets[0]), c.net_rr,
+                             ctx.extras.get("spine_dir"), ("%.2f" % _vrc if _vrc is not None else "NA"))
+                continue   # SHADOW never books
             for c in cands:
                 symbol_cands.append((strat, c))
-            if cands:
-                produced_by[strat.strategy_id] = produced_by.get(strat.strategy_id, 0) + len(cands)
 
         # Roll up shadow observations (C7 short flags, C10 detected sweeps) for logging.
         shadow_tally["c7_shorts"] += len(ctx.extras.get("_c7_shadow_shorts", []))
