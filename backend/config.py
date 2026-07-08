@@ -248,6 +248,11 @@ ENFORCE_TIER_GATE = True
 # is never exercised, so GATE_PASSED_ON_SWALLOW=0 is untested-not-clean. Flipped on the safe-direction
 # argument. Set False to go live fail-open+instrumented and flip after a real booking window. Reversible.
 ENFORCE_GATE_FAIL_CLOSED = True
+# §16 (ENFORCE): the A+ component score (raid.core.scoring) governs LIVE leverage for C1/C2/C3. Every
+# candidate that reaches the booking loop is scored 0-100 across 7 components; <80 REJECTs (no ungraded
+# book), and the quality-mapped cap (80-87 -> 1.5x, 88-93 -> 2.25x, >=94 -> 3.0x) is MIN'd with the tier
+# ceiling + the Kraken pair cap. False = score still LOGGED (shadow) but does not reject/cap. Reversible.
+ENFORCE_AB_SCORE = True
 # §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
 # (stricter-wins over the tier). C3 RECALIBRATED from TWO live liquid-universe windows: breakdown
 # volume ratios grind low (median 0.3-0.5x, max 1.34x/0.98x — liquid pairs don't spike on breakdowns

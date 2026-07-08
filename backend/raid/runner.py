@@ -30,7 +30,7 @@ import costs
 import gate
 from signals import Signal
 
-from raid.core import features as F, liquidity, tiers
+from raid.core import features as F, liquidity, scoring, tiers
 from raid.core.provider import CAP_FUTURES, CAP_MARGIN, CAP_SHORT, CAP_SPOT_LONG
 from raid.core.regime import classify
 from raid.core.risk import (
@@ -757,6 +757,17 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
                      sr.symbol, symbol_cands[0][0].strategy_id, symbol_cands[0][1].net_rr, _dropped)
         strat, c = symbol_cands[0]
 
+        # §16 A+ component score — governs LIVE leverage (only C1/C2/C3 reach here; shadow strategies
+        # are logged + skipped above). ALWAYS logged (see WHY a trade got its leverage). Below the
+        # ordinary floor -> REJECT (no ungraded book); the quality leverage cap is MIN'd into pair_lev
+        # at sizing below.
+        _scr = scoring.score_candidate(ctx, c)
+        log.info("A+ SCORE %s %s %s -> %s", sr.symbol, strat.strategy_id, c.direction.value, _scr.log_str())
+        if config.ENFORCE_AB_SCORE and _scr.quality_lev == 0.0:
+            log.info("RAID ENGINE: skip %s %s — A+ score %.1f < %.0f (REJECT; no ungraded book)",
+                     sr.symbol, strat.strategy_id, _scr.score, scoring.SCORE_REJECT_BELOW)
+            continue
+
         # C.8 tier gating. Log-only until config.ENFORCE_TIER_GATE, then BINDS: a pair not in an
         # active tier (DISABLED / tier_gate REJECT on the universal/tier spread cap) is rejected here,
         # and a booked candidate is capped at the pair's tier leverage (min tier/Kraken) and sized by
@@ -848,6 +859,8 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         pair_lev = capped_leverage(eff_lev, sr.symbol)
         if config.ENFORCE_TIER_GATE and _ti.get("leverage"):
             pair_lev = min(pair_lev, float(_ti["leverage"]))   # C.8: never exceed the pair's tier leverage
+        if config.ENFORCE_AB_SCORE and _scr.quality_lev > 0:
+            pair_lev = min(pair_lev, _scr.quality_lev)         # §16: never exceed the quality-mapped leverage
         if pair_lev < 1:
             log.info("RAID ENGINE: skip %s — not margin-eligible at book time (fail closed)", sr.symbol)
             continue
@@ -855,8 +868,8 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
         margin = base_notional
         if deployed_margin + margin > equity * config.MAX_EQUITY_DEPLOYED_PCT:
             continue
-        log.info("RAID ENGINE: SIZING %s $%.2f notional (%.2fx leverage, cap %sx, $%.2f margin)",
-                 sr.symbol, notional, pair_lev, kraken_max_leverage(sr.symbol), margin)
+        log.info("RAID ENGINE: SIZING %s $%.2f notional (%.2fx leverage [score %.0f/%s], cap %sx, $%.2f margin)",
+                 sr.symbol, notional, pair_lev, _scr.score, _scr.band, kraken_max_leverage(sr.symbol), margin)
 
         # B.5: portfolio-risk caps BIND. Risk-to-stop of THIS candidate on its sized notional; reject
         # if it would push total / same-direction / cluster risk over cap (running risk = real open
@@ -908,7 +921,7 @@ async def run_strategy_cycle(scan_results, db, controls: dict) -> int:
             "pnl": 0, "status": "open", "close_reason": None, "paper_mode": config.PAPER_MODE,
             "sl": float(c.stop_price), "tp": float(c.targets[0]),
             "instrument_type": "crypto", "market_regime": ctx.market_regime.value,
-            "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} lev={pair_lev}x margin={margin:.2f} :: {strat.explain_decision(c, ctx)}"[:1000],
+            "claude_reasoning": f"{strat.strategy_id} {c.entry_type.value} net_rr={c.net_rr} score={_scr.score:.0f} band={_scr.band} lev={pair_lev}x margin={margin:.2f} :: {strat.explain_decision(c, ctx)}"[:1000],
             "predicted_prob": None, "kelly_fraction": None,
             "initial_stop_price": float(c.stop_price), "initial_stop_distance_pct": _init_stop_dist,
             "entry_atr_pct": _entry_atr, "ema20_dist_pct": _ema20_dist, "ema50_dist_pct": _ema50_dist,
