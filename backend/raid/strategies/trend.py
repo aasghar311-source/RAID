@@ -57,10 +57,14 @@ class C1LongTrendBreakout(Strategy):
     strategy_id = "RAID-C1"
     version = CODE_VERSION
     required_capabilities = frozenset({CAP_SPOT_LONG})
-    eligible_regimes = frozenset({MarketRegime.TREND_UP})
+    eligible_regimes = frozenset()   # Stage-D: gated by the reconciled SPINE, not the legacy regime
     atr_scaled_stop = True   # stop = 1.5x 1h-ATR -> graduated cost/R gate applies
 
     def generate_candidates(self, ctx: StrategyContext) -> list[Candidate]:
+        # Stage-D: direction from the reconciled per-pair spine — fire ONLY when the pair resolves
+        # LONG (portfolio RISK_ON/MIXED + the pair's own up-structure). Never a long on a RISK_OFF book.
+        if ctx.extras.get("spine_dir") != "LONG":
+            return []
         f = ctx.feature(_PRIMARY_TF)
         if f is None or f.swing_high is None or f.ema20 is None or f.ema50 is None:
             return []
@@ -72,12 +76,13 @@ class C1LongTrendBreakout(Strategy):
         # not already extended far above it.
         if not (resistance * 0.985 <= px <= resistance * 1.002):
             return []
-        # Breakout volume confirmation — real breakouts expand volume. Uses the raw 5m
-        # candles already in ctx.extras (no new API call). Cuts C1's false breakouts.
-        confirmed, ratio = _volume_confirmed(ctx.extras.get("candles_5m"))
-        if not confirmed:
-            log.info("C1: skip %s — breakout volume %.1fx avg (need %.1fx)",
-                     ctx.symbol, ratio, _VOLUME_CONFIRM_MULT)
+        # §10 volume override — real breakouts expand volume, measured on the COMPLETED bar (the runner
+        # threads vol_ratio_completed so we never read the partial forming bar). 1.50x is reachable for
+        # longs (harness vr@LONG p90~2.1) — deliberately NOT C3's 0.70x (short breakdowns grind).
+        vrc = ctx.extras.get("vol_ratio_completed")
+        if vrc is None or vrc < config.C1_VOLUME_MULT:
+            log.info("C1: skip %s — breakout volume %s < %.2fx (completed-bar)", ctx.symbol,
+                     ("%.2f" % vrc if vrc is not None else "NA"), config.C1_VOLUME_MULT)
             return []
         trigger = resistance * 1.001            # confirm the breakout
         stop_dist = atr_scaled_stop_dist(ctx, f.atr_pct)            # 1.5x 1h-ATR, bounded [0.6%,4%]

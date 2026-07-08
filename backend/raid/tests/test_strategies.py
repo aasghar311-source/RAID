@@ -30,14 +30,19 @@ def _pos_vol_candles(n=25, prior_vol=100.0, latest_vol=200.0):
     return bars
 
 
-def _ctx(regime: MarketRegime, feat: FeatureSnapshot, caps=frozenset({CAP_SPOT_LONG}), spread=0.0004) -> StrategyContext:
+def _ctx(regime: MarketRegime, feat: FeatureSnapshot, caps=frozenset({CAP_SPOT_LONG}), spread=0.0004,
+         spine_dir=None, vrc=None) -> StrategyContext:
+    extras = {"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z",
+              "candles_5m": _pos_vol_candles()}
+    if spine_dir is not None:
+        extras["spine_dir"] = spine_dir            # Stage-D: C1/C3 gate on the reconciled spine
+    if vrc is not None:
+        extras["vol_ratio_completed"] = vrc        # + the §10 completed-bar volume
     return StrategyContext(
         symbol="SOLUSD", instrument_id="SOLUSD", timestamp="2026-07-02T00:00:00Z",
         market_regime=regime, features={"5m": feat},
         market_data_snapshot_id="md", reference_price=Decimal("100"),
-        spread_pct=spread, depth_ok=True, capabilities=caps,
-        extras={"equity": 10000.0, "risk_pct": 0.005, "expiry_ts": "2026-07-02T00:20:00Z",
-                "candles_5m": _pos_vol_candles()},
+        spread_pct=spread, depth_ok=True, capabilities=caps, extras=extras,
     )
 
 
@@ -59,7 +64,7 @@ def test_c1_breakout_emits_valid_candidate():
     c1 = reg.get("RAID-C1")
     # Price just below resistance(100), stacked uptrend -> breakout setup.
     feat = _feat(last_price=99.5, swing_high=100.0, ema20=99.0, ema50=98.0, atr_pct=0.008)
-    ctx = _ctx(MarketRegime.TREND_UP, feat)
+    ctx = _ctx(MarketRegime.TREND_UP, feat, spine_dir="LONG", vrc=2.0)
     assert c1.is_eligible(ctx) is True
     cands = c1.generate_candidates(ctx)
     assert len(cands) == 1
@@ -71,15 +76,18 @@ def test_c1_breakout_emits_valid_candidate():
     assert c.quantity > 0 and c.planned_risk_dollars > 0
 
 
-def test_c1_no_trade_when_extended_or_wrong_regime():
+def test_c1_no_trade_when_extended_or_wrong_spine():
     reg = build_default_registry()
     c1 = reg.get("RAID-C1")
-    # Wrong regime -> not eligible.
-    ctx_range = _ctx(MarketRegime.RANGE, _feat(last_price=99.5))
-    assert c1.is_eligible(ctx_range) is False
-    # Eligible regime but price extended far above resistance -> no candidate.
+    feat = _feat(last_price=99.5, swing_high=100.0, ema20=99.0, ema50=98.0, atr_pct=0.008)
+    # Stage-D: gated by the SPINE, not the legacy regime — a non-LONG spine -> no candidate.
+    assert c1.generate_candidates(_ctx(MarketRegime.TREND_UP, feat, spine_dir="NEUTRAL", vrc=2.0)) == []
+    assert c1.generate_candidates(_ctx(MarketRegime.TREND_UP, feat, spine_dir="SHORT", vrc=2.0)) == []
+    # LONG spine but price extended far above resistance -> no candidate.
     feat_ext = _feat(last_price=110.0, swing_high=100.0, ema20=99.0, ema50=98.0)
-    assert c1.generate_candidates(_ctx(MarketRegime.TREND_UP, feat_ext)) == []
+    assert c1.generate_candidates(_ctx(MarketRegime.TREND_UP, feat_ext, spine_dir="LONG", vrc=2.0)) == []
+    # LONG spine + setup but volume below §10 1.50x -> no candidate.
+    assert c1.generate_candidates(_ctx(MarketRegime.TREND_UP, feat, spine_dir="LONG", vrc=1.0)) == []
 
 
 def test_c4_range_reversion_emits_candidate():

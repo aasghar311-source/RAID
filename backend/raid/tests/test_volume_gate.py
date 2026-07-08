@@ -99,8 +99,11 @@ def test_positive_volume_unchanged():
     reg = build_default_registry()
     c1 = reg.get("RAID-C1")
     f1 = _feat(last_price=99.5, swing_high=100.0, ema20=99.0, ema50=98.0, atr_pct=0.008)
-    cands = c1.generate_candidates(_ctx(candles=_candles(latest_vol=200.0, prior_vol=100.0), feat=f1))
-    assert len(cands) == 1   # ratio 2.0 clears C1's 1.5x AND the shared gate
+    c1ctx = _ctx(candles=_candles(latest_vol=200.0, prior_vol=100.0), feat=f1)
+    c1ctx.extras["spine_dir"] = "LONG"                # Stage-D: C1 gates on the reconciled spine
+    c1ctx.extras["vol_ratio_completed"] = 2.0         # + the §10 completed-bar volume (>= 1.50)
+    cands = c1.generate_candidates(c1ctx)
+    assert len(cands) == 1   # LONG spine + 2.0x completed-bar volume -> fires
 
 
 # (d) _volume_confirmed fails CLOSED on missing/zero; 1.5x threshold unchanged for positive bars

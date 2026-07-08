@@ -223,7 +223,7 @@ MIN_LATEST_5M_VOL_USD = 250.0
 # Stage-D strategy rebuild: strategies in this set are in the SHADOW state — they generate + LOG
 # candidates (STRATEGY_SHADOW) but book NOTHING (Appendix-B initial states). Remove from the set to
 # promote a strategy to live booking once its shadow traffic is validated. Reversible.
-STRATEGY_SHADOW = {"RAID-C3"}
+STRATEGY_SHADOW = {"RAID-C1", "RAID-C3"}
 # §10 strategy-specific volume overrides — completed-bar volume_ratio must be >= this to fire
 # (stricter-wins over the tier). C3 RECALIBRATED from TWO live liquid-universe windows: breakdown
 # volume ratios grind low (median 0.3-0.5x, max 1.34x/0.98x — liquid pairs don't spike on breakdowns
@@ -231,6 +231,10 @@ STRATEGY_SHADOW = {"RAID-C3"}
 # grind (<=0.58x). So this is a RELATIVE volume filter (top ~20% of the pair's own breakdown volume),
 # not an expansion confirmation (which doesn't fit liquid shorts). 1.50->1.00->0.70, derived from data.
 C3_VOLUME_MULT = 0.70
+# C1 long breakout: 1.50x. VOLUME ASYMMETRY (harness) — long breakouts DO expand volume (vr@LONG-
+# eligible p75~1.11, p90~2.10, reaches 1.5x) so the operator's §10 1.50x is appropriate + reachable;
+# deliberately NOT mirrored to C3's 0.70x (short breakdowns grind, don't spike). Per-direction §10.
+C1_VOLUME_MULT = 1.50
 # C7 short sleeve (PAPER). Independent, runtime-checked flag: when True, C7 shorts the bottom-
 # quintile laggard in a TREND_DOWN regime (mirror of C3's short path). OFF => C7 shorts stay
 # shadow-only (no C7 shorts booked; C3 and C7-long unaffected). ON RECORD: enabling this REVERSES a

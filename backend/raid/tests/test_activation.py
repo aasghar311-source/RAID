@@ -523,8 +523,10 @@ def test_c1_volume_filter_skips_low_volume():
 def test_c1_volume_filter_allows_high_volume():
     from raid.strategies.trend import C1LongTrendBreakout
     ctx = _ctx(MarketRegime.TREND_UP, extras={"candles_5m": _vol_candles(200.0)}, features={"5m": _c1_feat()})
+    ctx.extras["spine_dir"] = "LONG"                   # Stage-D: C1 gates on the reconciled spine
+    ctx.extras["vol_ratio_completed"] = 2.0           # + the §10 completed-bar volume (>= 1.50)
     cands = C1LongTrendBreakout().generate_candidates(ctx)
-    assert len(cands) == 1 and cands[0].strategy_id == "RAID-C1"   # 2.0x avg >= 1.5x -> produce
+    assert len(cands) == 1 and cands[0].strategy_id == "RAID-C1"   # 2.0x >= 1.50 -> produce
 
 
 # ── regression: a full book must NOT blank out regime logging ────────────────
